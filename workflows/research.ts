@@ -7,6 +7,7 @@ import { cardItems, getDb, niches, products, runs, sources } from "@/db/client";
 import type { SourceCategory } from "@/db/schema";
 import { LIMITS, MODELS } from "@/lib/research/config";
 import {
+  describeError,
   failOnAccountError,
   firecrawl,
   withRateLimitRetry,
@@ -110,6 +111,16 @@ export async function researchProduct(runId: number) {
 
   try {
     const started = await startRun(runId);
+
+    // Health check: if the first Firecrawl call fails, stop now instead of failing every step.
+    await throttle();
+    const health = await checkFirecrawl();
+    if (!health.ok) {
+      throw new Error(
+        `Firecrawl недоступний, прогін зупинено: ${health.message}. ` +
+          "Перевірте FIRECRAWL_API_KEY у налаштуваннях Vercel і стан сервісу Firecrawl.",
+      );
+    }
 
     // 0. Resolve the user's input to the product's official URL (once per product).
     let mainUrl = started.mainUrl;
@@ -307,7 +318,10 @@ async function resolveProduct(runId: number, budget: BudgetLeft): Promise<Resolv
       }
     } catch (e) {
       failOnAccountError(e);
-      hits = [];
+      return fail(
+        { ...base, productName, reason: `Пошук Firecrawl не вдався: ${describeError(e)}` },
+        `Не вдалося знайти сайт продукту: пошук Firecrawl повернув помилку (${describeError(e)}).`,
+      );
     }
     for (const d of cleaned.domains) hits.push({ url: d.url, title: "(domain from the user's input)" });
     if (hits.length === 0) {
@@ -425,6 +439,18 @@ async function failRun(runId: number, error: string, log: RunLog, totals: Totals
 }
 
 // ---------------------------------------------------------------- Firecrawl
+
+// Cheap authenticated call (no credits) to make sure the client and key work.
+async function checkFirecrawl(): Promise<{ ok: true } | { ok: false; message: string }> {
+  "use step";
+  try {
+    await withRateLimitRetry(() => firecrawl().getCreditUsage());
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: describeError(e) };
+  }
+}
+checkFirecrawl.maxRetries = 0;
 
 async function readPage(
   runId: number,
