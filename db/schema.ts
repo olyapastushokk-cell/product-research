@@ -18,7 +18,8 @@ export type SourceCategory =
   | "news";
 export type SourceCheck = "reliable" | "verify";
 export type RunStatus = "pending" | "running" | "done" | "failed";
-export type CardItemStatus = "established" | "not_established" | "not_applicable";
+// "reference": the fact is written in another section (seeSection); no source here.
+export type CardItemStatus = "established" | "not_established" | "not_applicable" | "reference";
 
 export const niches = pgTable("niches", {
   id: serial("id").primaryKey(),
@@ -104,4 +105,8 @@ export const cardItems = pgTable("card_items", {
   // Reason for "not_established" / "not_applicable".
   reason: text("reason"),
   companyClaim: boolean("company_claim").notNull().default(false),
+  // false when the quote was not found verbatim in the source text.
+  quoteVerified: boolean("quote_verified").notNull().default(true),
+  // For status "reference": the section key that holds the fact.
+  seeSection: text("see_section"),
 });

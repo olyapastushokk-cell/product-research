@@ -13,6 +13,10 @@ export const LIMITS = {
   maxStoredChars: 200_000,
   classifyChars: 2_500,
   cardCharsPerSource: 5_000,
+  // Firecrawl free plan allows ~10 requests/min: keep at least 7 s between calls.
+  firecrawlMinIntervalSec: 7,
+  firecrawlRateLimitRetries: 2,
+  firecrawlDefaultWaitSec: 60,
 } as const;
 
 // Sonnet only writes card items; Haiku does cheap steps.

@@ -155,7 +155,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             const sectionItems = items.filter((i) => i.section === section.key);
             if (sectionItems.length === 0) return null;
             return (
-              <section key={section.key}>
+              <section key={section.key} id={`section-${section.key}`}>
                 <h3>{section.title}</h3>
                 <ul>
                   {sectionItems.map((item) => {
@@ -171,14 +171,30 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                           </>
                         )}
                         {item.companyClaim && <span className="muted"> · company_claim</span>}
-                        {item.status !== "established" && (
+                        {item.status === "reference" && item.seeSection && (
+                          <>
+                            {" "}
+                            <a href={`#section-${item.seeSection}`}>
+                              → {SECTIONS.find((x) => x.key === item.seeSection)?.title ?? item.seeSection}
+                            </a>
+                          </>
+                        )}
+                        {item.status === "established" && !item.quoteVerified && (
+                          <strong className="error"> · quote unverified</strong>
+                        )}
+                        {(item.status === "not_established" || item.status === "not_applicable") && (
                           <span className="muted">
                             {" "}
                             · {item.status === "not_applicable" ? "Not applicable" : "Not established"}
                             {item.reason ? `: ${item.reason}` : ""}
                           </span>
                         )}
-                        {item.quote && <div className="muted">«{item.quote}»</div>}
+                        {item.quote && (
+                          <div className={item.quoteVerified ? "muted" : "error"}>
+                            «{item.quote}»
+                            {!item.quoteVerified && " (цитату не знайдено дослівно в джерелі)"}
+                          </div>
+                        )}
                       </li>
                     );
                   })}
