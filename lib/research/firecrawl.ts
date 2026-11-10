@@ -78,7 +78,8 @@ export function gapReasonFromError(e: unknown): { reason: GapReason | "rate_limi
   const status = errorStatus(e);
   const lower = message.toLowerCase();
   if (isRateLimited(e)) return { reason: "rate_limited", message };
-  if (lower.includes("not supported") || lower.includes("no longer supported")) {
+  // e.g. Reddit: "HTTP 403 ... we do not support this site".
+  if (lower.includes("not supported") || lower.includes("do not support")) {
     return { reason: "unsupported_by_scraper", message };
   }
   if (status === 404) return { reason: "404", message };

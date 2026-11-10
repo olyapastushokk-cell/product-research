@@ -72,11 +72,12 @@ export async function researchProduct(runId: number) {
     totals.outputTokens += call.outputTokens;
     totals.costUsd += call.costUsd;
     if (totals.costUsd > LIMITS.maxCostUsd) {
-      throw new Error(
-        `Cost limit exceeded: $${totals.costUsd.toFixed(3)} > $${LIMITS.maxCostUsd}`,
-      );
+      throw budgetStop(`Cost limit reached: $${totals.costUsd.toFixed(3)} of $${LIMITS.maxCostUsd}`);
     }
   };
+  // Card sections already written (or marked failed); the rest become budget_exhausted on a stop.
+  const doneSections = new Set<string>();
+  let nicheQuestions = "";
 
   // Space Firecrawl calls to stay under the plan's rate limit (durable sleep).
   let firecrawlCalls = 0;
@@ -110,6 +111,7 @@ export async function researchProduct(runId: number) {
 
   try {
     const started = await startRun(runId);
+    nicheQuestions = started.nicheQuestions;
 
     // Health check: if the first Firecrawl call fails, stop now instead of failing every step.
     await throttle();
@@ -210,17 +212,38 @@ export async function researchProduct(runId: number) {
       budgetLeft,
       addCall,
       save: () => saveProgress(runId, log, totals),
+      doneSections,
     });
 
     await finishRun(runId, log, totals);
     return { status: "done" };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    if (e instanceof Error && e.name === "BudgetStop") log.stoppedBy = message;
+    if (e instanceof Error && e.name === "BudgetStop") {
+      // Keep finished work: remaining sections become budget_exhausted, run is done (partial).
+      await finishPartial(runId, message, log, totals, remainingSections(doneSections, nicheQuestions));
+      return { status: "done", partial: message };
+    }
     log.errors.push({ stage: "run", message });
     await failRun(runId, message, log, totals);
     return { status: "failed", error: message };
   }
+}
+
+function remainingSections(done: Set<string>, nicheQuestions: string): string[] {
+  const all = CARD_GROUPS.flat();
+  if (nicheQuestions.trim()) all.push("niche_questions");
+  return all.filter((k) => !done.has(k));
+}
+
+// Workflow helper: marks unwritten sections and finishes the run as done (partial).
+async function finishPartial(runId: number, reason: string, log: RunLog, totals: Totals, remaining: string[]) {
+  log.stoppedBy = reason;
+  log.warnings.push(`Partial card: ${reason}. Not written: ${remaining.join(", ") || "—"}`);
+  if (remaining.length > 0) {
+    await markSections(runId, remaining, "budget_exhausted", "Не заповнено: вичерпано ліміт бюджету прогону");
+  }
+  await finishRun(runId, log, totals);
 }
 
 // ---------------------------------------------------------------- rebuild card
@@ -247,9 +270,10 @@ export async function rebuildCard(runId: number) {
     totals.outputTokens += call.outputTokens;
     totals.costUsd += call.costUsd;
     if (spent.costUsd > LIMITS.maxCostUsd) {
-      throw new Error(`Cost limit exceeded: $${spent.costUsd.toFixed(3)} > $${LIMITS.maxCostUsd}`);
+      throw budgetStop(`Cost limit reached: $${spent.costUsd.toFixed(3)} of $${LIMITS.maxCostUsd}`);
     }
   };
+  const doneSections = new Set<string>();
 
   try {
     if (state.usableSources === 0) throw new Error("У прогоні немає збережених джерел для картки");
@@ -261,12 +285,16 @@ export async function rebuildCard(runId: number) {
       budgetLeft,
       addCall,
       save: () => saveProgress(runId, log, totals),
+      doneSections,
     });
     await finishRun(runId, log, totals);
     return { status: "done" };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    if (e instanceof Error && e.name === "BudgetStop") log.stoppedBy = message;
+    if (e instanceof Error && e.name === "BudgetStop") {
+      await finishPartial(runId, message, log, totals, remainingSections(doneSections, state.nicheQuestions));
+      return { status: "done", partial: message };
+    }
     log.errors.push({ stage: "rebuild", message });
     await failRun(runId, message, log, totals);
     return { status: "failed", error: message };
@@ -385,7 +413,7 @@ async function resolveProduct(runId: number, budget: BudgetLeft): Promise<Resolv
     }
 
     // 3. Search for the official site.
-    let hits: { url: string; title?: string; description?: string }[] = [];
+    const hits: { url: string; title?: string; description?: string }[] = [];
     try {
       const res = await withRateLimitRetry(() =>
         firecrawl().search(searchQuery, { limit: 8, sources: ["web"] }),
@@ -897,25 +925,46 @@ async function writeCardGroups(ctx: {
   budgetLeft: () => BudgetLeft;
   addCall: (call: ModelCallLog) => void;
   save: () => Promise<void>;
+  // Filled with sections that are finished (written or marked generation_failed).
+  doneSections: Set<string>;
 }) {
   let contextSent = false;
+  // Output sizes of finished groups: the next cost check expects a similar size.
+  const outputs: number[] = [];
   for (let g = 0; g < CARD_GROUPS.length; g++) {
     const sections = [...CARD_GROUPS[g]];
     if (g === CARD_GROUPS.length - 1 && ctx.nicheQuestions.trim()) sections.push("niche_questions");
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const res = await writeCardGroup(ctx.runId, sections, ctx.productName, ctx.nicheQuestions, ctx.budgetLeft(), contextSent);
+      const expectedOutput =
+        outputs.length > 0
+          ? Math.ceil((outputs.reduce((a, b) => a + b, 0) / outputs.length) * 1.25)
+          : LIMITS.cardExpectedOutputTokens;
+      const res = await writeCardGroup(
+        ctx.runId,
+        sections,
+        ctx.productName,
+        ctx.nicheQuestions,
+        ctx.budgetLeft(),
+        contextSent,
+        expectedOutput,
+      );
       if ("stopped" in res) throw budgetStop(res.stopped);
-      ctx.addCall(res.call);
       contextSent = true;
       if (res.ok) {
+        // Items are saved: mark done before addCall, which may stop on the cost limit.
+        for (const k of sections) ctx.doneSections.add(k);
+        outputs.push(res.call.outputTokens);
         ctx.log.warnings.push(...res.warnings);
+        ctx.addCall(res.call);
         break;
       }
       ctx.log.errors.push({ stage: "card", message: `${res.message} (attempt ${attempt})` });
       if (attempt === 2) {
-        await markSectionsFailed(ctx.runId, sections);
+        await markSections(ctx.runId, sections, "generation_failed", "Не вдалося згенерувати цей розділ картки");
+        for (const k of sections) ctx.doneSections.add(k);
         ctx.log.warnings.push(`Sections ${sections.join(", ")}: generation_failed`);
       }
+      ctx.addCall(res.call);
     }
     await ctx.save();
   }
@@ -933,6 +982,7 @@ async function writeCardGroup(
   nicheQuestions: string,
   budget: BudgetLeft,
   contextLikelyCached: boolean,
+  expectedOutputTokens: number,
 ): Promise<GroupResult> {
   "use step";
   const db = getDb();
@@ -1003,6 +1053,7 @@ async function writeCardGroup(
         ),
       }),
       maxOutputTokens: LIMITS.cardMaxOutputTokens,
+      expectedOutputTokens,
       budget,
     });
   } catch (e) {
@@ -1092,8 +1143,9 @@ async function writeCardGroup(
 }
 writeCardGroup.maxRetries = 0;
 
-// Marks every section of a failed group as "Not established: generation_failed".
-async function markSectionsFailed(runId: number, sectionKeys: string[]) {
+// Marks sections as "Not established: <reason>" (generation_failed, budget_exhausted).
+// Niche questions are optional, so they are never marked.
+async function markSections(runId: number, sectionKeys: string[], reason: string, value: string) {
   "use step";
   const db = getDb();
   const [run] = await db.select({ productId: runs.productId }).from(runs).where(eq(runs.id, runId));
@@ -1104,9 +1156,9 @@ async function markSectionsFailed(runId: number, sectionKeys: string[]) {
       runId,
       section: "not_established",
       field: k,
-      value: "Не вдалося згенерувати цей розділ картки",
+      value,
       status: "not_established" as const,
-      reason: "generation_failed",
+      reason,
       companyClaim: false,
     }));
   if (rows.length > 0) await db.insert(cardItems).values(rows);

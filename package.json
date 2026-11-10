@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "docs:agent": "node --experimental-strip-types scripts/gen-agent-doc.ts"
   },
   "dependencies": {
     "@mendable/firecrawl-js": "^4.52.0",

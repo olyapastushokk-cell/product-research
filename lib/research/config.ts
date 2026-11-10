@@ -15,6 +15,9 @@ export const LIMITS = {
   cardCharsPerSource: 5_000,
   // Per section group (5 groups); a group needs ~2–5k tokens.
   cardMaxOutputTokens: 16_000,
+  // Expected output of the first group for the pre-call cost check; later groups use
+  // the average of earlier groups (+25%).
+  cardExpectedOutputTokens: 5_000,
   // Firecrawl free plan allows ~10 requests/min: keep at least 7 s between calls.
   firecrawlMinIntervalSec: 7,
   firecrawlRateLimitRetries: 2,

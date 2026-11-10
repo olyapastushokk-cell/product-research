@@ -40,23 +40,25 @@ export async function callModel<T>(opts: {
   prompt: string;
   schema: z.ZodType<T>;
   maxOutputTokens: number;
+  // Realistic output size for the pre-call cost check (defaults to maxOutputTokens).
+  expectedOutputTokens?: number;
   budget: BudgetLeft;
 }): Promise<{ output: T; call: ModelCallLog }> {
   if (opts.budget.modelCalls < 1) {
     throw new BudgetStop(`Model call limit reached (${LIMITS.maxModelCalls})`);
   }
-  // Worst case: cache reads cost 10% of input, cache writes 125%.
+  // Estimate: cache reads cost 10% of input, cache writes 125%; output = expected size.
   const cachedChars = opts.cachedContext ? opts.instructions.length + opts.cachedContext.length : 0;
   const plainChars = opts.prompt.length + (opts.cachedContext ? 0 : opts.instructions.length);
   const cacheFactor = opts.contextLikelyCached ? 0.1 : 1.25;
-  const worstCase = estimateCost(
+  const estimate = estimateCost(
     opts.model,
     estimateTokens(plainChars) + Math.ceil(estimateTokens(cachedChars) * cacheFactor),
-    opts.maxOutputTokens,
+    Math.min(opts.expectedOutputTokens ?? opts.maxOutputTokens, opts.maxOutputTokens),
   );
-  if (worstCase > opts.budget.costUsd) {
+  if (estimate > opts.budget.costUsd) {
     throw new BudgetStop(
-      `Cost limit: next call "${opts.purpose}" may cost up to $${worstCase.toFixed(3)}, ` +
+      `Cost limit: next call "${opts.purpose}" is estimated at $${estimate.toFixed(3)}, ` +
         `only $${opts.budget.costUsd.toFixed(3)} of $${LIMITS.maxCostUsd} left`,
     );
   }

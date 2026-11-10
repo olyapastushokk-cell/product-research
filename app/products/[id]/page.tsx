@@ -121,6 +121,12 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       ) : (
         <p className="mt-6 text-muted-foreground">Досліджень ще не було.</p>
       )}
+      {run?.status === "done" && log?.stoppedBy && (
+        <InfoPanel className="mt-4 border-l-4 border-primary">
+          <strong>Картку зібрано частково:</strong> {log.stoppedBy}. Розділи, які не встигли заповнити, позначено
+          «Not established: budget_exhausted».
+        </InfoPanel>
+      )}
       {run?.error && (
         <InfoPanel className="mt-4 border-l-4 border-destructive font-semibold text-destructive">
           {run.error}
