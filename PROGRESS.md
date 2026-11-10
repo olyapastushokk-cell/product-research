@@ -12,5 +12,4 @@
 - Stage 4.
 
 ## Open issues
-- Resolve accepts only "high" confidence; otherwise the user must give a URL.
-- Cost is an estimate unless AI Gateway returns the exact cost.
+- Cost is an estimate unless AI Gateway returns the exact cost. Pages with DB data not screenshot-tested.
