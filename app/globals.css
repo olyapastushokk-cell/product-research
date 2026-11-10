@@ -21,3 +21,21 @@ button { margin-top: 8px; font: inherit; }
 .error { color: #b00020; }
 .muted { color: #666; }
 header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+h2 { margin-top: 28px; }
+details { margin: 12px 0; }
+summary { cursor: pointer; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.toolbar form, .toolbar button { margin: 0; }
+.button { display: inline-block; padding: 1px 8px; border: 1px solid #888; border-radius: 3px; background: #f0f0f0; color: inherit; text-decoration: none; }
+ul.card { padding-left: 20px; }
+ul.card li { margin-bottom: 6px; }
+.tag { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 12px; border: 1px solid #ccc; border-radius: 3px; color: #555; }
+.tag-warn { border-color: #b00020; color: #b00020; }
+details.quote { margin: 2px 0 0; font-size: 14px; }
+details.quote summary { color: #666; font-size: 12px; }
+blockquote { margin: 4px 0 4px 8px; padding-left: 8px; border-left: 3px solid #ddd; color: #444; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; width: 100%; }
+th, td { border: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
+td.url { word-break: break-all; min-width: 200px; }
+tr:target { background: #fff8d6; }

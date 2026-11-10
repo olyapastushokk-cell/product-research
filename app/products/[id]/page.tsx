@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { asc, desc, eq } from "drizzle-orm";
-import { cardItems, getDb, niches, products, runs, sources } from "@/db";
+import { eq } from "drizzle-orm";
+import { getDb, niches } from "@/db";
 import { startResearch } from "@/app/actions";
+import { loadCard } from "@/lib/card/data";
+import { itemLabels, sectionTitle } from "@/lib/card/markdown";
 import { LIMITS } from "@/lib/research/config";
 import { reconcileRun } from "@/lib/research/reconcile";
 import type { Resolution } from "@/lib/research/resolve";
@@ -23,21 +25,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const id = Number((await params).id);
   if (!Number.isInteger(id)) notFound();
 
-  const db = getDb();
-  const [product] = await db.select().from(products).where(eq(products.id, id));
-  if (!product) notFound();
-  const [niche] = await db.select().from(niches).where(eq(niches.id, product.nicheId));
-  const allRuns = await db.select().from(runs).where(eq(runs.productId, id)).orderBy(desc(runs.id));
-  const run = allRuns[0] ? await reconcileRun(allRuns[0]) : undefined;
+  const data = await loadCard(id);
+  if (!data) notFound();
+  const { product, allRuns, sources, items } = data;
+  const [niche] = await getDb().select().from(niches).where(eq(niches.id, product.nicheId));
+  const run = data.run ? await reconcileRun(data.run) : undefined;
   const active = run && (run.status === "pending" || run.status === "running");
-
-  const runSources = run
-    ? await db.select().from(sources).where(eq(sources.runId, run.id)).orderBy(asc(sources.ref))
-    : [];
-  const items = run
-    ? await db.select().from(cardItems).where(eq(cardItems.runId, run.id)).orderBy(asc(cardItems.id))
-    : [];
-  const refById = new Map(runSources.map((s) => [s.id, s.ref]));
+  const sourceById = new Map(sources.map((s) => [s.id, s]));
   const log = (run?.log ?? null) as RunLog | null;
   const resolution = (product.resolution ?? null) as Resolution | null;
 
@@ -48,199 +42,222 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <Link href={`/niches/${product.nicheId}`}>← {niche?.name ?? "Ніша"}</Link>
       </p>
       <h1>{product.name}</h1>
-      <h2>Що досліджуємо</h2>
-      <ul>
-        <li>
-          Ви ввели: <code>{product.input || product.mainUrl}</code>
-        </li>
-        <li>
-          Визначений сайт:{" "}
-          {product.mainUrl ? (
-            <a href={product.mainUrl}>{product.mainUrl}</a>
-          ) : (
-            <span className="muted">ще не визначено</span>
-          )}
-        </li>
-        {resolution?.reason && <li>Чому: {resolution.reason}</li>}
-        {resolution?.confidence && <li>Впевненість: {resolution.confidence}</li>}
-        {resolution?.searchQuery && (
-          <li>
-            Пошуковий запит: <code>{resolution.searchQuery}</code>
-          </li>
+      <p>
+        {product.mainUrl ? (
+          <a href={product.mainUrl}>{product.mainUrl}</a>
+        ) : (
+          <span className="muted">Сайт ще не визначено</span>
         )}
-      </ul>
-      {resolution && resolution.candidates.length > 0 && (
-        <>
-          <p>Інші кандидати (тезки):</p>
-          <ul>
-            {resolution.candidates.map((c) => (
-              <li key={c.url}>
-                {c.name} — <a href={c.url}>{c.url}</a>
-                {c.note && <span className="muted"> · {c.note}</span>}
-              </li>
-            ))}
-          </ul>
-        </>
+      </p>
+
+      <details>
+        <summary>Як визначено продукт</summary>
+        <ul>
+          <li>
+            Ви ввели: <code>{product.input || product.mainUrl}</code>
+          </li>
+          {resolution?.reason && <li>Чому цей сайт: {resolution.reason}</li>}
+          {resolution?.confidence && <li>Впевненість: {resolution.confidence}</li>}
+          {resolution?.searchQuery && (
+            <li>
+              Пошуковий запит: <code>{resolution.searchQuery}</code>
+            </li>
+          )}
+          {resolution?.candidates.map((c) => (
+            <li key={c.url}>
+              Інший кандидат: {c.name} — <a href={c.url}>{c.url}</a>
+              {c.note && <span className="muted"> · {c.note}</span>}
+            </li>
+          ))}
+        </ul>
+        {!active && <ChangeInputForm productId={product.id} defaultValue={product.input || product.mainUrl || ""} />}
+      </details>
+
+      <div className="toolbar">
+        <form action={startResearch.bind(null, product.id)}>
+          <button type="submit" disabled={Boolean(active)}>
+            {run ? "Дослідити знову" : "Дослідити"}
+          </button>
+        </form>
+        {run && (
+          <>
+            <a className="button" href={`/products/${product.id}/card.md?run=${run.id}`} download>
+              Завантажити markdown
+            </a>
+            <a className="button" href={`/products/${product.id}/log.md?run=${run.id}`} download>
+              Завантажити лог
+            </a>
+          </>
+        )}
+      </div>
+
+      {run && (
+        <p className="muted">
+          Прогін #{run.id}: <strong>{STATUS_LABEL[run.status] ?? run.status}</strong>
+          {active && " (сторінка оновлюється сама)"} · сторінок {run.pageCount}/{LIMITS.maxPageReads} · викликів
+          моделі {run.modelCalls}/{LIMITS.maxModelCalls} · ${run.costUsd.toFixed(4)} з ${LIMITS.maxCostUsd}
+        </p>
       )}
-      {!active && (
-        <details open={!product.mainUrl}>
-          <summary>Змінити продукт</summary>
-          <ChangeInputForm productId={product.id} defaultValue={product.input || product.mainUrl || ""} />
-        </details>
-      )}
-      {product.extraUrls.length > 0 && (
+      {run?.error && <p className="error">Помилка: {run.error}</p>}
+      {!run && <p className="muted">Досліджень ще не було.</p>}
+
+      {SECTIONS.map((section) => {
+        const list = items.filter((i) => i.section === section.key);
+        if (list.length === 0) return null;
+        return (
+          <section key={section.key} id={`section-${section.key}`}>
+            <h2>{section.title}</h2>
+            <ul className="card">
+              {list.map((item) => {
+                const src = item.sourceId ? sourceById.get(item.sourceId) : undefined;
+                const labels = itemLabels(item, src);
+                return (
+                  <li key={item.id}>
+                    {item.field && <strong>{item.field}: </strong>}
+                    {item.value}
+                    {src?.ref && (
+                      <>
+                        {" "}
+                        <a href={`#S${src.ref}`}>[S{src.ref}]</a>
+                      </>
+                    )}
+                    {item.status === "reference" && item.seeSection && (
+                      <>
+                        {" "}
+                        <a href={`#section-${item.seeSection}`}>→ {sectionTitle(item.seeSection)}</a>
+                      </>
+                    )}
+                    {item.status === "not_established" && (
+                      <span className="tag">Not established{item.reason ? `: ${item.reason}` : ""}</span>
+                    )}
+                    {item.status === "not_applicable" && <span className="tag">Not applicable</span>}
+                    {labels.map((l) => (
+                      <span key={l} className={l === "quote unverified" ? "tag tag-warn" : "tag"}>
+                        {l}
+                      </span>
+                    ))}
+                    {item.quote && (
+                      <details className="quote">
+                        <summary>цитата</summary>
+                        <blockquote>{item.quote}</blockquote>
+                      </details>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
+
+      {sources.length > 0 && (
         <>
-          <p>Додаткові URL:</p>
-          <ul>
-            {product.extraUrls.map((u) => (
-              <li key={u}>
-                <a href={u}>{u}</a>
-              </li>
-            ))}
-          </ul>
+          <h2>Джерела</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>URL</th>
+                  <th>Category</th>
+                  <th>Check</th>
+                  <th>Прочитано</th>
+                  <th>Опубліковано</th>
+                  <th>Примітки</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((s) => (
+                  <tr key={s.id} id={`S${s.ref}`}>
+                    <td>S{s.ref}</td>
+                    <td className="url">
+                      <a href={s.url} target="_blank" rel="noreferrer">
+                        {s.url}
+                      </a>
+                    </td>
+                    <td>{s.category}</td>
+                    <td>{s.check}</td>
+                    <td>{s.dateRead.toISOString().slice(0, 10)}</td>
+                    <td>{s.datePublished}</td>
+                    <td className="muted">
+                      {[s.addedByUser ? "added_by_user" : "", s.relevant ? "" : "не використано", s.note ?? ""]
+                        .filter(Boolean)
+                        .join("; ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
-      <form action={startResearch.bind(null, product.id)}>
-        <button type="submit" disabled={Boolean(active)}>
-          {run ? "Дослідити знову" : "Дослідити"}
-        </button>
-      </form>
-
-      <h2>Прогін</h2>
-      {!run ? (
-        <p className="muted">Досліджень ще не було.</p>
-      ) : (
-        <>
+      {run && (
+        <details>
+          <summary>Лог прогону і виклики моделей</summary>
           <p>
-            Статус: <strong>{STATUS_LABEL[run.status] ?? run.status}</strong>
-            {active && " (сторінка оновлюється сама)"}
+            Токени: {run.inputTokens.toLocaleString("uk-UA")} вхідних, {run.outputTokens.toLocaleString("uk-UA")}{" "}
+            вихідних · оцінка вартості ${run.costUsd.toFixed(4)}
           </p>
-          {run.error && <p className="error">Помилка: {run.error}</p>}
-          <ul>
-            <li>
-              Сторінок прочитано: {run.pageCount} / {LIMITS.maxPageReads}
-            </li>
-            <li>
-              Викликів моделі: {run.modelCalls} / {LIMITS.maxModelCalls}
-            </li>
-            <li>
-              Токени: {run.inputTokens.toLocaleString("uk-UA")} вхідних,{" "}
-              {run.outputTokens.toLocaleString("uk-UA")} вихідних
-            </li>
-            <li>
-              Оцінка вартості: ${run.costUsd.toFixed(4)} (ліміт ${LIMITS.maxCostUsd})
-            </li>
-          </ul>
-          {log && log.modelCalls.length > 0 && (
-            <details>
-              <summary>Виклики моделей</summary>
+          {log && (
+            <>
+              <h3>Виклики моделей</h3>
               <ul>
                 {log.modelCalls.map((c, i) => (
                   <li key={i}>
-                    {c.purpose} — {c.model}: {c.inputTokens} / {c.outputTokens} токенів, $
-                    {c.costUsd.toFixed(4)} ({c.costSource === "gateway" ? "AI Gateway" : "оцінка"})
+                    {c.purpose} — {c.model}: {c.inputTokens} / {c.outputTokens} токенів, ${c.costUsd.toFixed(4)} (
+                    {c.costSource === "gateway" ? "AI Gateway" : "оцінка"})
                   </li>
                 ))}
               </ul>
-            </details>
-          )}
-        </>
-      )}
-
-      {run && items.length > 0 && (
-        <>
-          <h2>Пункти картки (сирий список)</h2>
-          {SECTIONS.map((section) => {
-            const sectionItems = items.filter((i) => i.section === section.key);
-            if (sectionItems.length === 0) return null;
-            return (
-              <section key={section.key} id={`section-${section.key}`}>
-                <h3>{section.title}</h3>
-                <ul>
-                  {sectionItems.map((item) => {
-                    const ref = item.sourceId ? refById.get(item.sourceId) : undefined;
-                    return (
-                      <li key={item.id}>
-                        {item.field && <strong>{item.field}: </strong>}
-                        {item.value}
-                        {ref && (
-                          <>
-                            {" "}
-                            <a href={`#S${ref}`}>[S{ref}]</a>
-                          </>
-                        )}
-                        {item.companyClaim && <span className="muted"> · company_claim</span>}
-                        {item.status === "reference" && item.seeSection && (
-                          <>
-                            {" "}
-                            <a href={`#section-${item.seeSection}`}>
-                              → {SECTIONS.find((x) => x.key === item.seeSection)?.title ?? item.seeSection}
-                            </a>
-                          </>
-                        )}
-                        {item.status === "established" && !item.quoteVerified && (
-                          <strong className="error"> · quote unverified</strong>
-                        )}
-                        {(item.status === "not_established" || item.status === "not_applicable") && (
-                          <span className="muted">
-                            {" "}
-                            · {item.status === "not_applicable" ? "Not applicable" : "Not established"}
-                            {item.reason ? `: ${item.reason}` : ""}
-                          </span>
-                        )}
-                        {item.quote && (
-                          <div className={item.quoteVerified ? "muted" : "error"}>
-                            «{item.quote}»
-                            {!item.quoteVerified && " (цитату не знайдено дослівно в джерелі)"}
-                          </div>
-                        )}
+              <h3>Пошукові запити</h3>
+              <ul>
+                {log.searchQueries.map((q, i) => (
+                  <li key={i}>
+                    [{q.topic}] {q.query} — {q.results} результатів{q.error && ` · ${q.error}`}
+                  </li>
+                ))}
+              </ul>
+              <h3>Пропущені джерела</h3>
+              <ul>
+                {log.skipped.map((s, i) => (
+                  <li key={i}>
+                    {s.url} — {s.reason}
+                  </li>
+                ))}
+              </ul>
+              {log.errors.length > 0 && (
+                <>
+                  <h3>Помилки</h3>
+                  <ul>
+                    {log.errors.map((e, i) => (
+                      <li key={i}>
+                        [{e.stage}] {e.url ? `${e.url}: ` : ""}
+                        {e.message}
                       </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            );
-          })}
-        </>
-      )}
-
-      {runSources.length > 0 && (
-        <>
-          <h2>Джерела</h2>
-          <ol>
-            {runSources.map((s) => (
-              <li key={s.id} id={`S${s.ref}`} value={s.ref ?? undefined}>
-                [S{s.ref}] <a href={s.url}>{s.url}</a> · {s.category} · {s.check} · прочитано{" "}
-                {s.dateRead.toISOString().slice(0, 10)} · опубліковано: {s.datePublished}
-                {s.addedByUser && " · added_by_user"}
-                {!s.relevant && <span className="muted"> · не використано</span>}
-                {s.note && <span className="muted"> · {s.note}</span>}
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-
-      {log && (
-        <details>
-          <summary>Лог прогону</summary>
-          <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{JSON.stringify(log, null, 2)}</pre>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="muted">Повний лог — у файлі «Завантажити лог».</p>
+            </>
+          )}
         </details>
       )}
 
       {allRuns.length > 1 && (
-        <>
-          <h2>Попередні прогони</h2>
+        <details>
+          <summary>Попередні прогони</summary>
           <ul>
             {allRuns.slice(1).map((r) => (
               <li key={r.id}>
                 #{r.id} · {STATUS_LABEL[r.status] ?? r.status} · {r.createdAt.toISOString().slice(0, 16)} · $
-                {r.costUsd.toFixed(4)}
+                {r.costUsd.toFixed(4)} · <a href={`/products/${product.id}/card.md?run=${r.id}`}>картка .md</a> ·{" "}
+                <a href={`/products/${product.id}/log.md?run=${r.id}`}>лог .md</a>
               </li>
             ))}
           </ul>
-        </>
+        </details>
       )}
     </>
   );
