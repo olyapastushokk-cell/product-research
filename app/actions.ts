@@ -3,10 +3,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { start } from "workflow/api";
-import { getDb, niches, products, runs } from "@/db";
-import { researchProduct } from "@/workflows/research";
+import { getDb, niches, products, runs, sources } from "@/db";
+import { rebuildCard as rebuildCardWorkflow, researchProduct } from "@/workflows/research";
 import { AUTH_COOKIE, authToken } from "@/lib/auth";
 import { parseHttpUrl } from "@/lib/urls";
 
@@ -123,4 +123,35 @@ async function launchRun(productId: number) {
       })
       .where(eq(runs.id, run.id));
   }
+}
+
+// Rebuilds the card of the latest run that has saved sources, without new Firecrawl reads.
+export async function rebuildCard(productId: number) {
+  const db = getDb();
+  const productRuns = await db.select().from(runs).where(eq(runs.productId, productId)).orderBy(desc(runs.id));
+  if (productRuns.some((r) => r.status === "pending" || r.status === "running")) return;
+  let target: number | undefined;
+  for (const r of productRuns) {
+    const [src] = await db.select({ id: sources.id }).from(sources).where(eq(sources.runId, r.id)).limit(1);
+    if (src) {
+      target = r.id;
+      break;
+    }
+  }
+  if (target === undefined) return;
+  await db.update(runs).set({ status: "pending", error: null, startedAt: new Date() }).where(eq(runs.id, target));
+  try {
+    const wf = await start(rebuildCardWorkflow, [target]);
+    await db.update(runs).set({ workflowRunId: wf.runId }).where(eq(runs.id, target));
+  } catch (e) {
+    await db
+      .update(runs)
+      .set({
+        status: "failed",
+        finishedAt: new Date(),
+        error: `Could not start rebuild: ${e instanceof Error ? e.message : String(e)}`,
+      })
+      .where(eq(runs.id, target));
+  }
+  revalidatePath(`/products/${productId}`);
 }

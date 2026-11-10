@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { ChevronDown, Coins, Cpu, Download, FileText, Library, Search } from "lucide-react";
+import { ChevronDown, Coins, Cpu, Download, FileText, Library, RefreshCw, Search } from "lucide-react";
 import { getDb, niches } from "@/db";
-import { startResearch } from "@/app/actions";
+import { rebuildCard, startResearch } from "@/app/actions";
 import { BackLink, ChevronLink } from "@/components/chevron-link";
 import { InfoPanel } from "@/components/info-panel";
 import { SectionHeading } from "@/components/section-heading";
@@ -81,6 +81,18 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <Search /> {run ? "Дослідити знову" : "Дослідити"}
             </Button>
           </form>
+          {sources.length > 0 && (
+            <form action={rebuildCard.bind(null, product.id)}>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={Boolean(active)}
+                title="Зібрати картку заново з уже збережених джерел, без нових читань сторінок"
+              >
+                <RefreshCw /> Перезібрати картку
+              </Button>
+            </form>
+          )}
           {run && (
             <>
               <Button asChild>

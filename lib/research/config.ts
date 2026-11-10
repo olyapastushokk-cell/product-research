@@ -13,6 +13,8 @@ export const LIMITS = {
   maxStoredChars: 200_000,
   classifyChars: 2_500,
   cardCharsPerSource: 5_000,
+  // Per section group (5 groups); a group needs ~2–5k tokens.
+  cardMaxOutputTokens: 16_000,
   // Firecrawl free plan allows ~10 requests/min: keep at least 7 s between calls.
   firecrawlMinIntervalSec: 7,
   firecrawlRateLimitRetries: 2,
