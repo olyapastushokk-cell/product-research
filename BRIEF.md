@@ -78,3 +78,5 @@ Next.js on Vercel · Claude via Vercel AI Gateway · Firecrawl API · Vercel Wor
 
 ## Later (not now)
 Filter card fields and switch views in the UI; comparison table across products in a niche.
+- Product page: filter card sections (show only chosen sections, e.g. only "Notable legal facts").
+- Product page: filter card items by source date (date published / date read).

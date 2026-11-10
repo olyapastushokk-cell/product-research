@@ -97,6 +97,7 @@ function parseExtraUrls(text: string): { urls: string[] } | { error: string } {
 export async function startResearch(productId: number) {
   await launchRun(productId);
   revalidatePath(`/products/${productId}`);
+  revalidatePath("/niches/[id]", "page");
 }
 
 // Creates a run row and starts the background workflow. Errors are saved on the run.

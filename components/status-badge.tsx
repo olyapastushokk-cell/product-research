@@ -10,5 +10,16 @@ const STATUS: Record<string, { label: string; variant: "success" | "default" | "
 export function StatusBadge({ status }: { status: string | null | undefined }) {
   if (!status) return <Badge>не досліджено</Badge>;
   const s = STATUS[status] ?? { label: status, variant: "default" as const };
-  return <Badge variant={s.variant}>{s.label}</Badge>;
+  const live = status === "running" || status === "pending";
+  return (
+    <Badge variant={s.variant}>
+      {live && (
+        <span className="relative flex size-1.5">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-60" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-current" />
+        </span>
+      )}
+      {s.label}
+    </Badge>
+  );
 }
