@@ -17,5 +17,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Workflow internal routes must not go through the password gate.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.well-known/workflow/).*)"],
 };

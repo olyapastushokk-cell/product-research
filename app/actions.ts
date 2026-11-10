@@ -3,8 +3,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
-import { getDb, niches, products } from "@/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { start } from "workflow/api";
+import { getDb, niches, products, runs } from "@/db";
+import { researchProduct } from "@/workflows/research";
 import { AUTH_COOKIE, authToken } from "@/lib/auth";
 import { parseHttpUrl } from "@/lib/urls";
 
@@ -63,10 +65,40 @@ export async function createProduct(
     if (url !== mainUrl && !extraUrls.includes(url)) extraUrls.push(url);
   }
 
-  // Research agent comes in a later stage; for now we only create the product.
   const [product] = await getDb()
     .insert(products)
     .values({ nicheId, name: new URL(mainUrl).hostname.replace(/^www\./, ""), mainUrl, extraUrls })
     .returning({ id: products.id });
+  await launchRun(product.id);
   redirect(`/products/${product.id}`);
+}
+
+export async function startResearch(productId: number) {
+  await launchRun(productId);
+  revalidatePath(`/products/${productId}`);
+}
+
+// Creates a run row and starts the background workflow. Errors are saved on the run.
+async function launchRun(productId: number) {
+  const db = getDb();
+  const active = await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.productId, productId), inArray(runs.status, ["pending", "running"])));
+  if (active.length > 0) return;
+
+  const [run] = await db.insert(runs).values({ productId }).returning({ id: runs.id });
+  try {
+    const wf = await start(researchProduct, [run.id]);
+    await db.update(runs).set({ workflowRunId: wf.runId }).where(eq(runs.id, run.id));
+  } catch (e) {
+    await db
+      .update(runs)
+      .set({
+        status: "failed",
+        finishedAt: new Date(),
+        error: `Could not start run: ${e instanceof Error ? e.message : String(e)}`,
+      })
+      .where(eq(runs.id, run.id));
+  }
 }

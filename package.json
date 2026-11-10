@@ -11,12 +11,16 @@
     "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "@mendable/firecrawl-js": "^4.52.0",
     "@neondatabase/serverless": "^1.2.0",
+    "ai": "^7.0.166",
     "drizzle-orm": "^0.45.4",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "server-only": "^0.0.1"
+    "server-only": "^0.0.1",
+    "workflow": "^5.4.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20",

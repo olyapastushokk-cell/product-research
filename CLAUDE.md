@@ -10,3 +10,5 @@
 ## Project facts
 - Next.js 16 (App Router, TypeScript). Auth gate is `proxy.ts` (Next 16 name for middleware), password from `APP_PASSWORD`.
 - DB: Postgres (Neon) via Drizzle, schema in `db/schema.ts`. After schema changes run `npm run db:generate` and commit `drizzle/`. `npm run build` applies migrations when `DATABASE_URL` is set.
+- Research agent: `workflows/research.ts` (Vercel Workflow; orchestration in the workflow, all I/O in `"use step"` functions). Prompts in `lib/research/prompts.ts`, limits and models in `lib/research/config.ts` (Sonnet writes card items only; Haiku for cheap steps). Hard limits per run: 40 model calls, 25 page reads, $0.50.
+- Workflow steps import `@/db/client` (no `server-only`); app code imports `@/db`.

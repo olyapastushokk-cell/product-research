@@ -1,0 +1,644 @@
+// Research agent: one durable run per product (Vercel Workflow).
+// The workflow function only orchestrates and keeps counters; all I/O is in steps.
+import { FatalError } from "workflow";
+import { z } from "zod";
+import { and, asc, eq } from "drizzle-orm";
+import { cardItems, getDb, niches, products, runs, sources } from "@/db/client";
+import type { SourceCategory } from "@/db/schema";
+import { LIMITS, MODELS } from "@/lib/research/config";
+import {
+  failOnAccountError,
+  firecrawl,
+  gapReasonFromError,
+  gapReasonFromStatus,
+} from "@/lib/research/firecrawl";
+import { BudgetStop, callModel, type BudgetLeft } from "@/lib/research/llm";
+
+import {
+  CARD_SECTIONS_A,
+  CARD_SECTIONS_B,
+  CLASSIFY_SYSTEM,
+  PICK_SEARCH_SYSTEM,
+  PLAN_SYSTEM,
+  cardSystem,
+} from "@/lib/research/prompts";
+import { emptyLog, type ModelCallLog, type RunLog } from "@/lib/research/types";
+import { baseHost, isOnDomain, urlKey } from "@/lib/research/urls";
+
+type Totals = {
+  modelCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+};
+
+type Stopped = { stopped: string };
+type ModelResult<T> = ({ ok: true; call: ModelCallLog } & T) | Stopped;
+
+type SearchHit = { url: string; title?: string; description?: string; topic: string };
+
+// Plain Error (not a class from step modules) so the workflow sandbox stays light.
+function budgetStop(message: string) {
+  const e = new Error(message);
+  e.name = "BudgetStop";
+  return e;
+}
+
+// ---------------------------------------------------------------- workflow
+
+export async function researchProduct(runId: number) {
+  "use workflow";
+
+  const log: RunLog = emptyLog();
+  const totals: Totals = { modelCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const budgetLeft = (): BudgetLeft => ({
+    modelCalls: LIMITS.maxModelCalls - totals.modelCalls,
+    costUsd: LIMITS.maxCostUsd - totals.costUsd,
+  });
+  const addCall = (call: ModelCallLog) => {
+    log.modelCalls.push(call);
+    totals.modelCalls += 1;
+    totals.inputTokens += call.inputTokens;
+    totals.outputTokens += call.outputTokens;
+    totals.costUsd += call.costUsd;
+    if (totals.costUsd > LIMITS.maxCostUsd) {
+      throw new Error(
+        `Cost limit exceeded: $${totals.costUsd.toFixed(3)} > $${LIMITS.maxCostUsd}`,
+      );
+    }
+  };
+
+  const seen = new Set<string>();
+  let nextRef = 1;
+  const read = async (url: string, opts: { addedByUser: boolean; official: boolean }) => {
+    const key = urlKey(url);
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (log.pageCount >= LIMITS.maxPageReads) {
+      log.skipped.push({ url, reason: "budget_exhausted" });
+      return;
+    }
+    log.pageCount += 1;
+    const ref = nextRef;
+    const res = await readPage(runId, ref, url, opts);
+    if (res.ok) {
+      nextRef += 1;
+      log.pagesRead.push({ ref, url, chars: res.chars });
+    } else {
+      log.skipped.push({ url, reason: res.reason });
+      log.errors.push({ url, stage: "read", message: res.message });
+    }
+  };
+
+  try {
+    const ctx = await startRun(runId);
+    const base = baseHost(ctx.mainUrl);
+
+    // 1. Main URL and the user's extra URLs.
+    await read(ctx.mainUrl, { addedByUser: false, official: true });
+    for (const url of ctx.extraUrls.slice(0, LIMITS.maxExtraUrls)) {
+      await read(url, { addedByUser: true, official: isOnDomain(url, base) });
+    }
+    for (const url of ctx.extraUrls.slice(LIMITS.maxExtraUrls)) {
+      log.skipped.push({ url, reason: `budget_exhausted (max ${LIMITS.maxExtraUrls} extra URLs)` });
+    }
+    await saveProgress(runId, log, totals);
+
+    // 2. Map the product's own site.
+    const map = await mapSite(ctx.mainUrl);
+    log.map = { url: ctx.mainUrl, linksFound: map.links.length, error: map.error };
+
+    // 3. Plan (Haiku): product name, domain pages to read, search queries.
+    const domainSlots = Math.max(
+      0,
+      LIMITS.maxPageReads - log.pageCount - LIMITS.reservedForSearch,
+    );
+    const plan = await planRun(runId, ctx.mainUrl, map.links, domainSlots, budgetLeft());
+    if ("stopped" in plan) throw budgetStop(plan.stopped);
+    addCall(plan.call);
+    for (const url of plan.pages) await read(url, { addedByUser: false, official: true });
+    await saveProgress(runId, log, totals);
+
+    // 4. Web search: only reviews, funding / company status, research mentions.
+    const hits: SearchHit[] = [];
+    for (const [topic, query] of Object.entries(plan.queries)) {
+      const res = await searchWeb(query, topic);
+      log.searchQueries.push({ topic, query, results: res.hits.length, error: res.error });
+      hits.push(...res.hits.filter((h) => !isOnDomain(h.url, base)));
+    }
+
+    // 5. Choose search results to read (Haiku).
+    const searchSlots = LIMITS.maxPageReads - log.pageCount;
+    let toRead: string[] = [];
+    if (hits.length > 0 && searchSlots > 0) {
+      const pick = await pickSearchResults(plan.productName, ctx.mainUrl, hits, searchSlots, budgetLeft());
+      if ("stopped" in pick) throw budgetStop(pick.stopped);
+      addCall(pick.call);
+      toRead = pick.read;
+      for (const s of pick.skip) log.skipped.push({ url: s.url, reason: `search: ${s.reason}` });
+    }
+    const chosen = new Set(toRead.map(urlKey));
+    for (const h of hits) {
+      if (!chosen.has(urlKey(h.url))) {
+        log.seenOnlyInSearch.push({ url: h.url, title: h.title, topic: h.topic });
+      }
+    }
+    for (const url of toRead) await read(url, { addedByUser: false, official: false });
+    await saveProgress(runId, log, totals);
+
+    if (log.pagesRead.length === 0) throw new Error("No pages could be read");
+
+    // 6. Label sources (Haiku), in batches.
+    const refs = log.pagesRead.map((p) => p.ref);
+    for (let i = 0; i < refs.length; i += 12) {
+      const res = await classifySources(runId, plan.productName, ctx.mainUrl, refs.slice(i, i + 12), budgetLeft());
+      if ("stopped" in res) throw budgetStop(res.stopped);
+      addCall(res.call);
+    }
+    await saveProgress(runId, log, totals);
+
+    // 7. Write card items (Sonnet), in two section groups.
+    for (const group of ["A", "B"] as const) {
+      const res = await writeCard(runId, group, plan.productName, ctx.nicheQuestions, budgetLeft());
+      if ("stopped" in res) throw budgetStop(res.stopped);
+      addCall(res.call);
+      log.warnings.push(...res.warnings);
+      await saveProgress(runId, log, totals);
+    }
+
+    await finishRun(runId, log, totals);
+    return { status: "done" };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (e instanceof Error && e.name === "BudgetStop") log.stoppedBy = message;
+    log.errors.push({ stage: "run", message });
+    await failRun(runId, message, log, totals);
+    return { status: "failed", error: message };
+  }
+}
+
+// ---------------------------------------------------------------- run state
+
+async function startRun(runId: number) {
+  "use step";
+  const db = getDb();
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  if (!run) throw new FatalError(`Run ${runId} not found`);
+  const [product] = await db.select().from(products).where(eq(products.id, run.productId));
+  if (!product) throw new FatalError(`Product ${run.productId} not found`);
+  const [niche] = await db.select().from(niches).where(eq(niches.id, product.nicheId));
+  await db
+    .update(runs)
+    .set({ status: "running", startedAt: new Date() })
+    .where(eq(runs.id, runId));
+  return {
+    mainUrl: product.mainUrl,
+    extraUrls: product.extraUrls,
+    nicheQuestions: niche?.nicheQuestions ?? "",
+  };
+}
+
+async function saveProgress(runId: number, log: RunLog, totals: Totals) {
+  "use step";
+  await getDb()
+    .update(runs)
+    .set({ log, pageCount: log.pageCount, ...totals })
+    .where(eq(runs.id, runId));
+}
+
+async function finishRun(runId: number, log: RunLog, totals: Totals) {
+  "use step";
+  await getDb()
+    .update(runs)
+    .set({ status: "done", finishedAt: new Date(), log, pageCount: log.pageCount, ...totals })
+    .where(eq(runs.id, runId));
+}
+
+async function failRun(runId: number, error: string, log: RunLog, totals: Totals) {
+  "use step";
+  await getDb()
+    .update(runs)
+    .set({
+      status: "failed",
+      error,
+      finishedAt: new Date(),
+      log,
+      pageCount: log.pageCount,
+      ...totals,
+    })
+    .where(eq(runs.id, runId));
+}
+
+// ---------------------------------------------------------------- Firecrawl
+
+async function readPage(
+  runId: number,
+  ref: number,
+  url: string,
+  opts: { addedByUser: boolean; official: boolean },
+): Promise<{ ok: true; chars: number } | { ok: false; reason: string; message: string }> {
+  "use step";
+  let doc;
+  try {
+    doc = await firecrawl().scrape(url, {
+      formats: ["markdown"],
+      onlyMainContent: true,
+      maxAge: 0,
+      timeout: 60_000,
+    });
+  } catch (e) {
+    failOnAccountError(e);
+    return { ok: false, ...gapReasonFromError(e) };
+  }
+  const status = doc.metadata?.statusCode;
+  if (status && status >= 400) {
+    return { ok: false, reason: gapReasonFromStatus(status), message: `HTTP ${status}` };
+  }
+  const text = (doc.markdown ?? "").trim();
+  if (!text) return { ok: false, reason: "not_found", message: "Empty page" };
+
+  const db = getDb();
+  const [run] = await db.select({ productId: runs.productId }).from(runs).where(eq(runs.id, runId));
+  // Idempotent on retry: one row per (run, ref).
+  await db.delete(sources).where(and(eq(sources.runId, runId), eq(sources.ref, ref)));
+  await db.insert(sources).values({
+    productId: run.productId,
+    runId,
+    ref,
+    url,
+    title: doc.metadata?.title ?? null,
+    // Provisional labels; classifySources sets the final ones.
+    category: opts.official ? "official" : "news",
+    check: opts.official ? "reliable" : "verify",
+    datePublished: doc.metadata?.publishedTime ?? doc.metadata?.modifiedTime ?? "not shown",
+    addedByUser: opts.addedByUser,
+    fullText: text.slice(0, LIMITS.maxStoredChars),
+  });
+  return { ok: true, chars: text.length };
+}
+readPage.maxRetries = 1;
+
+async function mapSite(url: string): Promise<{ links: string[]; error?: string }> {
+  "use step";
+  try {
+    const res = await firecrawl().map(url, {
+      includeSubdomains: true,
+      sitemap: "include",
+      ignoreQueryParameters: true,
+      limit: LIMITS.mapLinks,
+    });
+    return { links: res.links.map((l) => l.url) };
+  } catch (e) {
+    failOnAccountError(e);
+    return { links: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+mapSite.maxRetries = 1;
+
+async function searchWeb(query: string, topic: string): Promise<{ hits: SearchHit[]; error?: string }> {
+  "use step";
+  try {
+    const res = await firecrawl().search(query, {
+      limit: LIMITS.searchResultsPerQuery,
+      sources: ["web"],
+    });
+    const hits: SearchHit[] = [];
+    for (const r of res.web ?? []) {
+      const url = "url" in r && typeof r.url === "string" ? r.url : undefined;
+      if (!url) continue;
+      hits.push({
+        url,
+        title: "title" in r && typeof r.title === "string" ? r.title : undefined,
+        description:
+          "description" in r && typeof r.description === "string" ? r.description : undefined,
+        topic,
+      });
+    }
+    return { hits };
+  } catch (e) {
+    failOnAccountError(e);
+    return { hits: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+searchWeb.maxRetries = 1;
+
+// ---------------------------------------------------------------- Haiku steps
+
+async function planRun(
+  runId: number,
+  mainUrl: string,
+  links: string[],
+  maxPages: number,
+  budget: BudgetLeft,
+): Promise<
+  ModelResult<{ productName: string; pages: string[]; queries: Record<"reviews" | "funding" | "research", string> }>
+> {
+  "use step";
+  const db = getDb();
+  // First page read: the main URL, or the first extra URL if the main one failed.
+  const [home] = await db
+    .select({ text: sources.fullText })
+    .from(sources)
+    .where(eq(sources.runId, runId))
+    .orderBy(asc(sources.ref))
+    .limit(1);
+  const prompt = [
+    `Main URL: ${mainUrl}`,
+    `Maximum pages to choose: ${maxPages}`,
+    `Homepage excerpt:\n${(home?.text ?? "(homepage could not be read)").slice(0, 4000)}`,
+    `URLs on the product's site:\n${links.join("\n") || "(none found)"}`,
+  ].join("\n\n");
+  try {
+    const { output, call } = await callModel({
+      purpose: "plan: choose pages and queries",
+      model: MODELS.cheap,
+      instructions: PLAN_SYSTEM,
+      prompt,
+      schema: z.object({
+        productName: z.string(),
+        pages: z.array(z.string()),
+        queries: z.object({ reviews: z.string(), funding: z.string(), research: z.string() }),
+      }),
+      maxOutputTokens: 2000,
+      budget,
+    });
+    const allowed = new Map(links.map((l) => [urlKey(l), l]));
+    const pages = output.pages
+      .map((p) => allowed.get(urlKey(p)))
+      .filter((p): p is string => Boolean(p))
+      .slice(0, maxPages);
+    return { ok: true, call, productName: output.productName, pages, queries: output.queries };
+  } catch (e) {
+    if (e instanceof BudgetStop) return { stopped: e.message };
+    throw e;
+  }
+}
+planRun.maxRetries = 0;
+
+async function pickSearchResults(
+  productName: string,
+  mainUrl: string,
+  hits: SearchHit[],
+  maxRead: number,
+  budget: BudgetLeft,
+): Promise<ModelResult<{ read: string[]; skip: { url: string; reason: string }[] }>> {
+  "use step";
+  const prompt = [
+    `Product: ${productName} (${mainUrl})`,
+    `Maximum results to read: ${maxRead}`,
+    "Search results:",
+    ...hits.map(
+      (h, i) => `${i + 1}. [${h.topic}] ${h.url}\n   ${h.title ?? ""}\n   ${(h.description ?? "").slice(0, 300)}`,
+    ),
+  ].join("\n");
+  try {
+    const { output, call } = await callModel({
+      purpose: "pick search results",
+      model: MODELS.cheap,
+      instructions: PICK_SEARCH_SYSTEM,
+      prompt,
+      schema: z.object({
+        read: z.array(z.string()),
+        skip: z.array(z.object({ url: z.string(), reason: z.string() })),
+      }),
+      maxOutputTokens: 3000,
+      budget,
+    });
+    const allowed = new Map(hits.map((h) => [urlKey(h.url), h.url]));
+    const read = output.read
+      .map((u) => allowed.get(urlKey(u)))
+      .filter((u): u is string => Boolean(u))
+      .slice(0, maxRead);
+    return { ok: true, call, read, skip: output.skip };
+  } catch (e) {
+    if (e instanceof BudgetStop) return { stopped: e.message };
+    throw e;
+  }
+}
+pickSearchResults.maxRetries = 0;
+
+const categorySchema = z.enum(["official", "listing", "business_data", "reviews", "research", "news"]);
+
+async function classifySources(
+  runId: number,
+  productName: string,
+  mainUrl: string,
+  refs: number[],
+  budget: BudgetLeft,
+): Promise<ModelResult<object>> {
+  "use step";
+  const db = getDb();
+  const rows = (
+    await db.select().from(sources).where(eq(sources.runId, runId)).orderBy(asc(sources.ref))
+  ).filter((s) => s.ref !== null && refs.includes(s.ref));
+  if (rows.length === 0) return { stopped: "No sources to classify" };
+  const prompt = [
+    `Product: ${productName} (${mainUrl})`,
+    ...rows.map(
+      (s) =>
+        `--- ref ${s.ref}\nURL: ${s.url}\nTitle: ${s.title ?? ""}\n${(s.fullText ?? "").slice(0, LIMITS.classifyChars)}`,
+    ),
+  ].join("\n\n");
+  try {
+    const { output, call } = await callModel({
+      purpose: `classify sources ${refs[0]}-${refs[refs.length - 1]}`,
+      model: MODELS.cheap,
+      instructions: CLASSIFY_SYSTEM,
+      prompt,
+      schema: z.object({
+        sources: z.array(
+          z.object({
+            ref: z.number(),
+            category: categorySchema,
+            hostedOnListing: z.boolean(),
+            datePublished: z.string(),
+            sameProduct: z.enum(["yes", "no", "unsure"]),
+            listicleOrAffiliate: z.boolean(),
+            unusable: z.enum(["login_required", "paywall", "blocked", "not_found"]).nullable(),
+            note: z.string().nullable(),
+          }),
+        ),
+      }),
+      maxOutputTokens: 3000,
+      budget,
+    });
+    const base = baseHost(mainUrl);
+    for (const c of output.sources) {
+      const row = rows.find((r) => r.ref === c.ref);
+      if (!row) continue;
+      const ownSite = isOnDomain(row.url, base);
+      // Pages on the product's own site are always "official".
+      const category: SourceCategory = ownSite ? "official" : c.category;
+      const reliable =
+        category === "official" ||
+        category === "listing" ||
+        category === "business_data" ||
+        (category === "reviews" && c.hostedOnListing);
+      const notes: string[] = [];
+      let relevant = true;
+      if (c.unusable) {
+        relevant = false;
+        notes.push(`unusable: ${c.unusable}`);
+      }
+      if (c.sameProduct === "no") {
+        relevant = false;
+        notes.push("not about this product");
+      } else if (c.sameProduct === "unsure") {
+        notes.push("same product unsure");
+      }
+      if (c.listicleOrAffiliate) {
+        if (ownSite) notes.push("own comparison page: competitor names only");
+        else {
+          relevant = false;
+          notes.push("listicle / affiliate");
+        }
+      }
+      if (c.note) notes.push(c.note);
+      await db
+        .update(sources)
+        .set({
+          category,
+          check: reliable ? "reliable" : "verify",
+          datePublished:
+            c.datePublished && c.datePublished !== "not shown" ? c.datePublished : row.datePublished,
+          relevant,
+          note: notes.join("; ") || null,
+        })
+        .where(eq(sources.id, row.id));
+    }
+    return { ok: true, call };
+  } catch (e) {
+    if (e instanceof BudgetStop) return { stopped: e.message };
+    throw e;
+  }
+}
+classifySources.maxRetries = 0;
+
+// ---------------------------------------------------------------- Sonnet step
+
+const GAP_REASONS = [
+  "not_found",
+  "blocked",
+  "paywall",
+  "login_required",
+  "404",
+  "unsupported_by_scraper",
+  "budget_exhausted",
+] as const;
+
+async function writeCard(
+  runId: number,
+  group: "A" | "B",
+  productName: string,
+  nicheQuestions: string,
+  budget: BudgetLeft,
+): Promise<ModelResult<{ warnings: string[] }>> {
+  "use step";
+  const db = getDb();
+  const all = await db.select().from(sources).where(eq(sources.runId, runId)).orderBy(asc(sources.ref));
+  const usable = all.filter((s) => s.relevant && s.ref !== null);
+  const sectionKeys =
+    group === "A"
+      ? ["company", "what_it_does", "who_for", "pricing", "acquisition", "market_signals"]
+      : ["customer_cases", "reviews", "competitors", "research_mentions", "legal", "niche_questions"];
+  const skippedNote = all
+    .filter((s) => !s.relevant)
+    .map((s) => `[S${s.ref}] ${s.url} — not used: ${s.note ?? ""}`)
+    .join("\n");
+
+  const prompt = [
+    `Product: ${productName}`,
+    group === "B"
+      ? `Niche questions (from the user):\n${nicheQuestions.trim() || "(none — return no niche_questions items)"}`
+      : "",
+    skippedNote ? `Sources read but excluded:\n${skippedNote}` : "",
+    "Sources:",
+    ...usable.map(
+      (s) =>
+        `=== [S${s.ref}] ${s.url}\ncategory: ${s.category}; check: ${s.check}; date published: ${s.datePublished}${s.note ? `; note: ${s.note}` : ""}\n${(s.fullText ?? "").slice(0, LIMITS.cardCharsPerSource)}`,
+    ),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  let result;
+  try {
+    result = await callModel({
+      purpose: `write card sections ${group}`,
+      model: MODELS.writer,
+      instructions: cardSystem(group === "A" ? CARD_SECTIONS_A : CARD_SECTIONS_B),
+      prompt,
+      schema: z.object({
+        items: z.array(
+          z.object({
+            section: z.enum(["not_established", ...sectionKeys] as [string, ...string[]]),
+            field: z.string(),
+            value: z.string(),
+            status: z.enum(["established", "not_established", "not_applicable"]),
+            sourceRef: z.number().nullable(),
+            quote: z.string().nullable(),
+            companyClaim: z.boolean(),
+            reason: z.enum(GAP_REASONS).nullable(),
+          }),
+        ),
+      }),
+      maxOutputTokens: 12_000,
+      budget,
+    });
+  } catch (e) {
+    if (e instanceof BudgetStop) return { stopped: e.message };
+    throw e;
+  }
+
+  const byRef = new Map(usable.map((s) => [s.ref as number, s]));
+  const norm = (t: string) => t.toLowerCase().replace(/[\s*_`>#|]+/g, " ").trim();
+  const warnings: string[] = [];
+  const rows: (typeof cardItems.$inferInsert)[] = [];
+  const [run] = await db.select({ productId: runs.productId }).from(runs).where(eq(runs.id, runId));
+
+  for (const item of result.output.items) {
+    let status = item.status;
+    let section = item.section;
+    let sourceId: number | null = null;
+    if (status === "established") {
+      const src = item.sourceRef !== null ? byRef.get(item.sourceRef) : undefined;
+      if (!src || !item.quote) {
+        warnings.push(`Dropped item without valid source: ${item.field}: ${item.value}`);
+        continue;
+      }
+      sourceId = src.id;
+      if (!norm(src.fullText ?? "").includes(norm(item.quote))) {
+        warnings.push(`Quote not found verbatim in [S${src.ref}]: "${item.quote.slice(0, 80)}"`);
+      }
+    }
+    if (status === "not_established") section = "not_established";
+    if (status === "not_applicable" && section === "not_established") status = "not_applicable";
+    rows.push({
+      productId: run.productId,
+      runId,
+      section,
+      field: item.field,
+      value: item.value,
+      quote: status === "established" ? item.quote : null,
+      sourceId,
+      status,
+      reason: item.reason,
+      companyClaim: item.companyClaim,
+    });
+  }
+  if (group === "B" && !rows.some((r) => r.section === "legal")) {
+    rows.push({
+      productId: run.productId,
+      runId,
+      section: "legal",
+      field: null,
+      value: "Nothing notable found in sources read",
+      status: "established",
+      companyClaim: false,
+    });
+  }
+
+  if (rows.length > 0) await db.insert(cardItems).values(rows);
+  return { ok: true, call: result.call, warnings };
+}
+writeCard.maxRetries = 0;

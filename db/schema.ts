@@ -1,5 +1,6 @@
 import {
   boolean,
+  doublePrecision,
   integer,
   jsonb,
   pgTable,
@@ -45,8 +46,15 @@ export const runs = pgTable("runs", {
     .references(() => products.id, { onDelete: "cascade" }),
   status: text("status").$type<RunStatus>().notNull().default("pending"),
   pageCount: integer("page_count").notNull().default(0),
+  modelCalls: integer("model_calls").notNull().default(0),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  // Estimated cost in USD (AI Gateway usage).
+  costUsd: doublePrecision("cost_usd").notNull().default(0),
   // Run log: search queries, URLs read, skipped sources, errors (BRIEF "Run log").
   log: jsonb("log"),
+  error: text("error"),
+  workflowRunId: text("workflow_run_id"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -59,7 +67,10 @@ export const sources = pgTable("sources", {
     .notNull()
     .references(() => products.id, { onDelete: "cascade" }),
   runId: integer("run_id").references(() => runs.id, { onDelete: "set null" }),
+  // Number n in [Sn], unique within a run.
+  ref: integer("ref"),
   url: text("url").notNull(),
+  title: text("title"),
   category: text("category").$type<SourceCategory>().notNull(),
   check: text("check").$type<SourceCheck>().notNull(),
   dateRead: timestamp("date_read", { withTimezone: true }).notNull().defaultNow(),
@@ -67,6 +78,9 @@ export const sources = pgTable("sources", {
   datePublished: text("date_published").notNull().default("not shown"),
   addedByUser: boolean("added_by_user").notNull().default(false),
   fullText: text("full_text"),
+  // false = read but not used for the card (namesake, listicle, empty page...).
+  relevant: boolean("relevant").notNull().default(true),
+  note: text("note"),
 });
 
 export const cardItems = pgTable("card_items", {
@@ -76,6 +90,8 @@ export const cardItems = pgTable("card_items", {
     .references(() => products.id, { onDelete: "cascade" }),
   runId: integer("run_id").references(() => runs.id, { onDelete: "cascade" }),
   section: text("section").notNull(),
+  // Short field label inside the section, e.g. "Founding year".
+  field: text("field"),
   value: text("value").notNull(),
   quote: text("quote"),
   sourceId: integer("source_id").references(() => sources.id, { onDelete: "set null" }),

@@ -2,11 +2,14 @@
 
 ## Done
 - Stage 0: environment, repo, BRIEF.md.
-- Stage 1 (closed): app skeleton deployed at https://product-research-phi.vercel.app. Pages: niches → niche (products, form "Дослідити", niche questions) → product (card placeholder). Password gate (`APP_PASSWORD`). Neon DB connected; Drizzle schema (niches, products, runs, sources, card_items) applied. Checked in production: login, create niche, create product.
+- Stage 1 (closed): app skeleton on https://product-research-phi.vercel.app, Neon DB, password gate.
+- Stage 2 (code done): research agent as Vercel Workflow. Flow: read main + extra URLs → map site → Haiku plans pages + 3 search queries → read pages → Firecrawl search (reviews, funding, research) → Haiku picks results → read → Haiku labels sources → Sonnet writes card items (2 calls). Saves sources, card items, run log, tokens, cost. Limits: 40 model calls, 25 page reads, $0.50. Product page: status, error, usage, raw card items with [Sn], sources, log.
 
 ## Next
-- Stage 2: research agent (Firecrawl + Claude via AI Gateway), save sources and card items. Needs `FIRECRAWL_API_KEY` in Vercel env.
+- Deploy, set FIRECRAWL_API_KEY in Vercel, run on a real product and check the card against BRIEF.md.
+- Stage 3: proper card view.
 
 ## Open issues
-- Build applies migrations to whatever `DATABASE_URL` the build sees (preview builds use the same DB).
-- Niche questions save and extra URLs not yet checked in production.
+- Not tested live yet (no DB, Firecrawl or AI Gateway access from the dev container).
+- Cost shown is an estimate unless AI Gateway returns the exact cost.
+- Quotes not found verbatim in the source are kept and listed in the run log warnings.
