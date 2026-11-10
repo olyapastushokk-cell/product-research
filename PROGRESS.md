@@ -13,4 +13,3 @@
 ## Open issues
 - Resolve accepts only "high" confidence; otherwise the user must give a URL.
 - Cost is an estimate unless AI Gateway returns the exact cost.
-- Throttling makes a run ~3–5 min longer; a paid Firecrawl plan could lower the 7 s interval.
