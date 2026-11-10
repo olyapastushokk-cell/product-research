@@ -32,7 +32,7 @@ export default async function NichePage({ params }: { params: Promise<{ id: stri
           {productRows.map((p) => (
             <li key={p.id}>
               <Link href={`/products/${p.id}`}>{p.name}</Link>{" "}
-              <span className="muted">{p.mainUrl}</span>
+              <span className="muted">{p.mainUrl ?? `(ще не визначено: ${p.input})`}</span>
             </li>
           ))}
         </ul>

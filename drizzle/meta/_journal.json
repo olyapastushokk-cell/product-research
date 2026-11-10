@@ -15,6 +15,20 @@
       "when": 1794331449016,
       "tag": "0001_research_run",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794332502031,
+      "tag": "0002_product_input",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794332502843,
+      "tag": "0003_cleanup_test_product",
+      "breakpoints": true
     }
   ]
 }

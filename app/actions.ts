@@ -51,26 +51,47 @@ export async function createProduct(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const mainUrl = parseHttpUrl(String(formData.get("mainUrl") ?? ""));
-  if (!mainUrl) return { error: "Вкажіть коректну основну URL" };
+  // Anything is accepted: URL, bare domain, product name or a messy link.
+  // The research run resolves it to the official site.
+  const input = String(formData.get("input") ?? "").trim().slice(0, 2000);
+  if (!input) return { error: "Вкажіть продукт: URL, домен або назву" };
 
-  const extraLines = String(formData.get("extraUrls") ?? "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const extraUrls: string[] = [];
-  for (const line of extraLines) {
-    const url = parseHttpUrl(line);
-    if (!url) return { error: `Некоректна додаткова URL: ${line}` };
-    if (url !== mainUrl && !extraUrls.includes(url)) extraUrls.push(url);
-  }
+  const extra = parseExtraUrls(String(formData.get("extraUrls") ?? ""));
+  if ("error" in extra) return extra;
 
   const [product] = await getDb()
     .insert(products)
-    .values({ nicheId, name: new URL(mainUrl).hostname.replace(/^www\./, ""), mainUrl, extraUrls })
+    .values({ nicheId, name: input.slice(0, 80), input, extraUrls: extra.urls })
     .returning({ id: products.id });
   await launchRun(product.id);
   redirect(`/products/${product.id}`);
+}
+
+// Replaces what the user typed and resolves it again on the next run.
+export async function updateProductInput(
+  productId: number,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const input = String(formData.get("input") ?? "").trim().slice(0, 2000);
+  if (!input) return { error: "Вкажіть продукт: URL, домен або назву" };
+  await getDb()
+    .update(products)
+    .set({ input, name: input.slice(0, 80), mainUrl: null, resolution: null })
+    .where(eq(products.id, productId));
+  await launchRun(productId);
+  revalidatePath(`/products/${productId}`);
+  return {};
+}
+
+function parseExtraUrls(text: string): { urls: string[] } | { error: string } {
+  const urls: string[] = [];
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const url = parseHttpUrl(line);
+    if (!url) return { error: `Некоректна додаткова URL: ${line}` };
+    if (!urls.includes(url)) urls.push(url);
+  }
+  return { urls };
 }
 
 export async function startResearch(productId: number) {

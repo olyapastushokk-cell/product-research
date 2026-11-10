@@ -34,7 +34,12 @@ export const products = pgTable("products", {
     .notNull()
     .references(() => niches.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  mainUrl: text("main_url").notNull(),
+  // Exactly what the user typed (URL, domain, name or messy link).
+  input: text("input").notNull().default(""),
+  // Official URL resolved from the input; null until resolved.
+  mainUrl: text("main_url"),
+  // How the input was resolved: domain, reason, other candidates (see lib/research/resolve.ts).
+  resolution: jsonb("resolution"),
   extraUrls: text("extra_urls").array().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -5,8 +5,10 @@ import { cardItems, getDb, niches, products, runs, sources } from "@/db";
 import { startResearch } from "@/app/actions";
 import { LIMITS } from "@/lib/research/config";
 import { reconcileRun } from "@/lib/research/reconcile";
+import type { Resolution } from "@/lib/research/resolve";
 import { SECTIONS, type RunLog } from "@/lib/research/types";
 import { AutoRefresh } from "./auto-refresh";
+import { ChangeInputForm } from "./change-input-form";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +39,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
     : [];
   const refById = new Map(runSources.map((s) => [s.id, s.ref]));
   const log = (run?.log ?? null) as RunLog | null;
+  const resolution = (product.resolution ?? null) as Resolution | null;
 
   return (
     <>
@@ -45,9 +48,46 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <Link href={`/niches/${product.nicheId}`}>← {niche?.name ?? "Ніша"}</Link>
       </p>
       <h1>{product.name}</h1>
-      <p>
-        Основна URL: <a href={product.mainUrl}>{product.mainUrl}</a>
-      </p>
+      <h2>Що досліджуємо</h2>
+      <ul>
+        <li>
+          Ви ввели: <code>{product.input || product.mainUrl}</code>
+        </li>
+        <li>
+          Визначений сайт:{" "}
+          {product.mainUrl ? (
+            <a href={product.mainUrl}>{product.mainUrl}</a>
+          ) : (
+            <span className="muted">ще не визначено</span>
+          )}
+        </li>
+        {resolution?.reason && <li>Чому: {resolution.reason}</li>}
+        {resolution?.confidence && <li>Впевненість: {resolution.confidence}</li>}
+        {resolution?.searchQuery && (
+          <li>
+            Пошуковий запит: <code>{resolution.searchQuery}</code>
+          </li>
+        )}
+      </ul>
+      {resolution && resolution.candidates.length > 0 && (
+        <>
+          <p>Інші кандидати (тезки):</p>
+          <ul>
+            {resolution.candidates.map((c) => (
+              <li key={c.url}>
+                {c.name} — <a href={c.url}>{c.url}</a>
+                {c.note && <span className="muted"> · {c.note}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {!active && (
+        <details open={!product.mainUrl}>
+          <summary>Змінити продукт</summary>
+          <ChangeInputForm productId={product.id} defaultValue={product.input || product.mainUrl || ""} />
+        </details>
+      )}
       {product.extraUrls.length > 0 && (
         <>
           <p>Додаткові URL:</p>

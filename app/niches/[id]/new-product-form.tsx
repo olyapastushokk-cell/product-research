@@ -12,8 +12,8 @@ export function NewProductForm({ nicheId }: { nicheId: number }) {
   return (
     <form action={action}>
       <label>
-        Основна URL продукту
-        <input type="text" name="mainUrl" placeholder="https://example.com" required />
+        Продукт: URL, домен або назва
+        <input type="text" name="input" placeholder="https://example.com, example.com або Example" required />
       </label>
       <label>
         Додаткові URL (необов&apos;язково, по одній на рядок)
