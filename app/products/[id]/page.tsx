@@ -15,10 +15,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { loadCard } from "@/lib/card/data";
 import { itemLabels, sectionTitle } from "@/lib/card/markdown";
 import { formatDate } from "@/lib/latest-runs";
-import { LIMITS } from "@/lib/research/config";
+import { LIMITS, costLimitFor } from "@/lib/research/config";
 import { reconcileRun } from "@/lib/research/reconcile";
 import type { Resolution } from "@/lib/research/resolve";
-import { SECTIONS, type RunLog } from "@/lib/research/types";
+import { sectionsFor, type RunLog } from "@/lib/research/types";
 import { AutoRefresh } from "./auto-refresh";
 import { ChangeInputForm } from "./change-input-form";
 
@@ -56,6 +56,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const sourceById = new Map(sources.map((s) => [s.id, s]));
   const log = (run?.log ?? null) as RunLog | null;
   const resolution = (product.resolution ?? null) as Resolution | null;
+  const topic = product.kind === "topic";
 
   return (
     <>
@@ -67,7 +68,12 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           <SectionHeading as="h1" className="mb-3">
             {product.name}
           </SectionHeading>
-          {product.mainUrl ? (
+          {topic ? (
+            <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+              <Badge variant="accent">Тема</Badge>
+              <span>Кілька джерел, без одного офіційного сайту</span>
+            </div>
+          ) : product.mainUrl ? (
             <ChevronLink href={product.mainUrl} external>
               {product.mainUrl}
             </ChevronLink>
@@ -137,17 +143,32 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <section className="mt-8 grid grid-cols-2 gap-4 sm:gap-5 lg:grid-cols-4">
           <StatCard icon={FileText} value={`${run.pageCount}`} label={`сторінок прочитано (з ${LIMITS.maxPageReads})`} />
           <StatCard icon={Library} value={`${sources.filter((s) => s.relevant).length}`} label={`джерел у картці (з ${sources.length})`} />
-          <StatCard icon={Coins} value={`$${run.costUsd.toFixed(2)}`} label={`вартість (ліміт $${LIMITS.maxCostUsd})`} />
+          <StatCard icon={Coins} value={`$${run.costUsd.toFixed(2)}`} label={`вартість (ліміт $${costLimitFor(product.kind)})`} />
           <StatCard icon={Cpu} value={`${run.modelCalls}`} label={`викликів моделі (з ${LIMITS.maxModelCalls})`} />
         </section>
       )}
 
       <InfoPanel className="mt-8">
-        <Collapsible title="Що досліджуємо" open={!product.mainUrl}>
+        <Collapsible title="Що досліджуємо" open={!topic && !product.mainUrl}>
           <ul className="space-y-1.5">
             <li>
-              Ви ввели: <code className="break-all">{product.input || product.mainUrl}</code>
+              {topic ? "Тема" : "Ви ввели"}: <code className="break-all">{product.input || product.mainUrl}</code>
             </li>
+            {topic &&
+              product.extraUrls.map((u) => (
+                <li key={u} className="break-all">
+                  Ваш URL (читається першим):{" "}
+                  <a href={u} target="_blank" rel="noreferrer" className="font-semibold underline">
+                    {u}
+                  </a>
+                </li>
+              ))}
+            {topic && (
+              <li className="text-muted-foreground">
+                Пошук: офіційні та регуляторні джерела, провайдери, новини, статистика, відгуки і скарги — мовою теми
+                та англійською.
+              </li>
+            )}
             {resolution?.reason && <li>Чому цей сайт: {resolution.reason}</li>}
             {resolution?.confidence && <li>Впевненість: {resolution.confidence}</li>}
             {resolution?.searchQuery && (
@@ -170,7 +191,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       </InfoPanel>
 
       <div className="mt-10 flex flex-col gap-6">
-        {SECTIONS.map((section) => {
+        {sectionsFor(product.kind).map((section) => {
           const list = items.filter((i) => i.section === section.key);
           if (list.length === 0) return null;
           return (
@@ -195,7 +216,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                           )}
                           {item.status === "reference" && item.seeSection && (
                             <a href={`#section-${item.seeSection}`} className="ml-1.5 font-bold text-primary hover:underline">
-                              → {sectionTitle(item.seeSection)}
+                              → {sectionTitle(item.seeSection, product.kind)}
                             </a>
                           )}
                         </p>

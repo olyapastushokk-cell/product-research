@@ -69,6 +69,15 @@ reads count against the 25-page budget (now: every scrape attempt counts), and p
 financials of the legal entity. **How to fix:** decide each rule in BRIEF.md, then update
 `CARD_SYSTEM` / `CLASSIFY_SYSTEM` and regenerate `docs/AGENT.md`.
 
+### 🔴 Topic mode not tested live
+- **What:** "Тема" mode (e.g. "е-ТТН") was added without a test run (budget saved for the demo).
+  Risks to check on the first run: search queries in Ukrainian return thin results (Firecrawl
+  `country: UA` geo-targeting is used); government sites may block the scraper; 8 queries + 7 s
+  throttle add ~1 min; provider prices may be missing if pricing pages are not in search results.
+- **How to fix:** after the first run, read the log (queries, skipped sources) and tune
+  `TOPIC_PLAN_SYSTEM` / `TOPIC_PICK_SYSTEM`; if provider pricing pages are missed, add a
+  per-provider pricing read after the pick step.
+
 ## Input and app
 
 ### 🟡 Product input resolution

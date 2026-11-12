@@ -51,17 +51,20 @@ export async function createProduct(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  // Anything is accepted: URL, bare domain, product name or a messy link.
-  // The research run resolves it to the official site.
+  // Product: anything is accepted (URL, bare domain, name or messy link); the run resolves
+  // it to the official site. Topic: a topic name (e.g. "е-ТТН"); no official site.
+  const kind = formData.get("kind") === "topic" ? "topic" : "product";
   const input = String(formData.get("input") ?? "").trim().slice(0, 2000);
-  if (!input) return { error: "Вкажіть продукт: URL, домен або назву" };
+  if (!input) {
+    return { error: kind === "topic" ? "Вкажіть назву теми" : "Вкажіть продукт: URL, домен або назву" };
+  }
 
   const extra = parseExtraUrls(String(formData.get("extraUrls") ?? ""));
   if ("error" in extra) return extra;
 
   const [product] = await getDb()
     .insert(products)
-    .values({ nicheId, name: input.slice(0, 80), input, extraUrls: extra.urls })
+    .values({ nicheId, kind, name: input.slice(0, 80), input, extraUrls: extra.urls })
     .returning({ id: products.id });
   await launchRun(product.id);
   redirect(`/products/${product.id}`);

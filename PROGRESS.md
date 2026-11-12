@@ -7,6 +7,7 @@
 - Stage 3: card view + card.md / log.md downloads. Design pass: Tailwind v4 + shadcn/ui (components in components/ui, added by hand: ui.shadcn.com is blocked in the dev container), Manrope, orange accent, dark header, card grids, stat cards, pill badges.
 - Niche board: preview cards from existing card items, sort, auto-refresh, empty state. Fix: Firecrawl client had maxRetries 0 (SDK = attempts, so no request was sent). Real errors logged (HTTP status + message, "http_error"); health check stops the run on the first failed Firecrawl call.
 - Card writing in 5 section groups (cached sources), retry then generation_failed; budget stop = partial done (budget_exhausted); realistic cost estimate; "Перезібрати картку". Docs: AGENT.md, KNOWN_ISSUES.md.
+- Topic mode ("Продукт / Тема"): user URLs first, Haiku plans 8 queries (topic language + English), broad search, topic card in 4 groups (Що це … Згадки в дослідженнях), $1 per run, "Тема" badge on the board. Not tested live.
 
 ## Next
 - Demo: rebuild the arcads.ai card first (no new reads). Open issues: docs/KNOWN_ISSUES.md.

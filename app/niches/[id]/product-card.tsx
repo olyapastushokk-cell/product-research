@@ -10,6 +10,7 @@ import { formatDate } from "@/lib/latest-runs";
 
 export type BoardProduct = {
   id: number;
+  kind: "product" | "topic";
   name: string;
   domain: string | null;
   input: string;
@@ -23,20 +24,26 @@ export type BoardProduct = {
 export function ProductCard({ p }: { p: BoardProduct }) {
   const active = p.status === "running" || p.status === "pending";
   const preview = p.preview;
+  const topic = p.kind === "topic";
   return (
     <article className="group relative flex h-full min-w-0 flex-col rounded-md bg-card p-5 shadow-[0_8px_40px_rgba(0,0,0,0.08)] transition duration-200 hover:-translate-y-1 hover:shadow-[0_16px_50px_rgba(0,0,0,0.14)] sm:p-6">
       <Link href={`/products/${p.id}`} className="absolute inset-0 z-0 rounded-md" aria-label={`Відкрити ${p.name}`} />
 
       <header className="flex items-center gap-3">
-        <Favicon domain={p.domain} name={p.name} />
-        <div className="min-w-0">
+        <Favicon domain={topic ? null : p.domain} name={p.name} />
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-extrabold leading-tight" title={p.name}>
             {p.name}
           </h2>
-          <p className="truncate text-sm text-muted-foreground" title={p.domain ?? p.input}>
-            {p.domain ?? `ще не визначено: ${p.input}`}
+          <p className="truncate text-sm text-muted-foreground" title={topic ? undefined : (p.domain ?? p.input)}>
+            {topic ? "Тема: кілька джерел, без одного сайту" : (p.domain ?? `ще не визначено: ${p.input}`)}
           </p>
         </div>
+        {topic && (
+          <Badge variant="accent" className="shrink-0 self-start">
+            Тема
+          </Badge>
+        )}
       </header>
 
       {p.hasCompletedRun && preview ? (
@@ -44,14 +51,29 @@ export function ProductCard({ p }: { p: BoardProduct }) {
           <p className="mt-4 line-clamp-2 min-h-[3em] text-sm" title={preview.description ?? undefined}>
             {preview.description ?? <span className="text-muted-foreground">Опис не встановлено</span>}
           </p>
-          <div className="mt-4 min-h-[3.25rem]">
-            <p className="truncate text-lg font-extrabold text-primary" title={preview.entryPrice ?? undefined}>
-              {preview.entryPrice ?? <span className="text-base font-semibold text-muted-foreground">Ціна не встановлена</span>}
-            </p>
-            <p className="truncate text-sm font-semibold" title={preview.model ?? undefined}>
-              {preview.model ?? <span className="font-normal text-muted-foreground">Модель не встановлена</span>}
-            </p>
-          </div>
+          {topic ? (
+            <div className="mt-4 min-h-[3.25rem]">
+              <p className="truncate text-lg font-extrabold text-primary">
+                {preview.providersCount ? (
+                  `${preview.providersCount} ${preview.providersCount === 1 ? "рішення / провайдер" : "рішень і провайдерів"}`
+                ) : (
+                  <span className="text-base font-semibold text-muted-foreground">Провайдерів не знайдено</span>
+                )}
+              </p>
+              <p className="truncate text-sm font-semibold">Статистика і поширення:</p>
+            </div>
+          ) : (
+            <div className="mt-4 min-h-[3.25rem]">
+              <p className="truncate text-lg font-extrabold text-primary" title={preview.entryPrice ?? undefined}>
+                {preview.entryPrice ?? (
+                  <span className="text-base font-semibold text-muted-foreground">Ціна не встановлена</span>
+                )}
+              </p>
+              <p className="truncate text-sm font-semibold" title={preview.model ?? undefined}>
+                {preview.model ?? <span className="font-normal text-muted-foreground">Модель не встановлена</span>}
+              </p>
+            </div>
+          )}
           <ul className="mt-4 min-h-[2.75rem] space-y-1 text-xs text-muted-foreground">
             {preview.signals.map((s, i) => (
               <li key={i} className="flex min-w-0 items-center gap-1.5">

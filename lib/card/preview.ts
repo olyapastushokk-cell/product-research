@@ -11,6 +11,8 @@ export type Preview = {
   // Lowest paid amount, for sorting (Free only = 0).
   entryPriceValue: number | null;
   signals: { text: string; companyClaim: boolean }[];
+  // Topic mode: number of solutions / providers found (null for products).
+  providersCount: number | null;
 };
 
 const FREE_RE = /\b(free|freemium)\b|безкошт/i;
@@ -59,7 +61,22 @@ function normalizeCurrency(c: string) {
   return c;
 }
 
-export function buildPreview(items: Item[]): Preview {
+export function buildPreview(items: Item[], kind: string = "product"): Preview {
+  if (kind === "topic") {
+    const what = established(items, "topic_what");
+    const stats = established(items, "topic_stats");
+    return {
+      description: what[0]?.value ?? null,
+      model: null,
+      entryPrice: null,
+      entryPriceValue: null,
+      providersCount: established(items, "topic_providers").length,
+      signals: stats.slice(0, 2).map((i) => ({
+        text: i.field ? `${i.field}: ${i.value}` : i.value,
+        companyClaim: i.companyClaim,
+      })),
+    };
+  }
   const what = established(items, "what_it_does");
   const pricing = established(items, "pricing");
   const signals = established(items, "market_signals");
@@ -78,6 +95,7 @@ export function buildPreview(items: Item[]): Preview {
     model,
     entryPrice,
     entryPriceValue,
+    providersCount: null,
     signals: signals.slice(0, 2).map((i) => ({
       text: i.field ? `${i.field}: ${i.value}` : i.value,
       companyClaim: i.companyClaim,

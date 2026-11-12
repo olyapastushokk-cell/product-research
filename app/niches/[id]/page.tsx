@@ -87,13 +87,15 @@ export default async function NichePage({
     const doneRunId = lastDone.get(p.id);
     return {
       id: p.id,
+      kind: p.kind === "topic" ? "topic" : "product",
       name: p.name,
       domain: domainOf(p.mainUrl),
       input: p.input,
       status: run?.status ?? null,
       lastRunAt: run ? (run.startedAt ?? run.createdAt) : null,
       hasCompletedRun: doneRunId !== undefined,
-      preview: doneRunId !== undefined ? buildPreview(items.filter((i) => i.runId === doneRunId)) : null,
+      preview:
+        doneRunId !== undefined ? buildPreview(items.filter((i) => i.runId === doneRunId), p.kind) : null,
     };
   });
   const sorted = sortProducts(board, sort);
@@ -111,7 +113,8 @@ export default async function NichePage({
           <div>
             <p className="text-xl font-extrabold">У цій ніші ще немає продуктів</p>
             <p className="mt-1 text-muted-foreground">
-              Введіть URL, домен або просто назву продукту — агент знайде сайт і збере картку.
+              Введіть URL, домен або назву продукту — або перемкніть на «Тема» (наприклад, «е-ТТН»), щоб
+              дослідити рішення без одного сайту.
             </p>
           </div>
           <Card className="w-full max-w-2xl text-left">

@@ -1,9 +1,15 @@
 // Hard safety limits and model choices for one research run.
 
+export type ResearchKind = "product" | "topic";
+
 export const LIMITS = {
   maxModelCalls: 40,
   maxPageReads: 25,
+  // Cost limit of a product run; topic runs use COST_LIMIT_USD.topic.
   maxCostUsd: 0.5,
+  // Topic mode: web search queries per run (Ukrainian + English for Ukrainian topics).
+  topicMaxQueries: 8,
+  topicResultsPerQuery: 6,
   // How many page reads to keep for search results (reviews, funding, research).
   reservedForSearch: 8,
   maxExtraUrls: 5,
@@ -23,6 +29,16 @@ export const LIMITS = {
   firecrawlRateLimitRetries: 2,
   firecrawlDefaultWaitSec: 60,
 } as const;
+
+// Cost limit per run, by research mode.
+export const COST_LIMIT_USD: Record<ResearchKind, number> = {
+  product: LIMITS.maxCostUsd,
+  topic: 1,
+};
+
+export function costLimitFor(kind: string | null | undefined): number {
+  return kind === "topic" ? COST_LIMIT_USD.topic : COST_LIMIT_USD.product;
+}
 
 // Sonnet only writes card items; Haiku does cheap steps.
 export const MODELS = {

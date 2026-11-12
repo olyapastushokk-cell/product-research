@@ -1,6 +1,6 @@
 // Markdown exports of a card and of a run log. Pure functions.
 import type { cardItems, products, runs, sources } from "@/db/schema";
-import { SECTIONS, type RunLog } from "@/lib/research/types";
+import { sectionTitleFor, sectionsFor, type RunLog } from "@/lib/research/types";
 
 type Product = typeof products.$inferSelect;
 type Run = typeof runs.$inferSelect;
@@ -11,8 +11,8 @@ const cell = (s: string | null | undefined) =>
   (s ?? "").replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ").trim();
 const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : "—");
 
-export const sectionTitle = (key: string | null) =>
-  SECTIONS.find((s) => s.key === key)?.title ?? key ?? "";
+// Section title for a product card (default) or a topic card.
+export const sectionTitle = (key: string | null, kind: string = "product") => sectionTitleFor(kind, key);
 
 // Small labels shown next to a card item.
 export function itemLabels(item: Item, source: Source | undefined): string[] {
@@ -26,13 +26,19 @@ export function itemLabels(item: Item, source: Source | undefined): string[] {
 
 export function cardToMarkdown(product: Product, run: Run, srcs: Source[], items: Item[]): string {
   const byId = new Map(srcs.map((s) => [s.id, s]));
+  const topic = product.kind === "topic";
   const out: string[] = [];
-  out.push(`# ${product.name}`, "");
-  out.push(`- Сайт: ${product.mainUrl ?? "не визначено"}`);
-  if (product.input && product.input !== product.mainUrl) out.push(`- Введено: ${product.input}`);
+  out.push(`# ${product.name}${topic ? " (тема)" : ""}`, "");
+  if (topic) {
+    out.push(`- Тема: ${product.input || product.name}`);
+    if (product.extraUrls.length > 0) out.push(`- URL користувача: ${product.extraUrls.join(", ")}`);
+  } else {
+    out.push(`- Сайт: ${product.mainUrl ?? "не визначено"}`);
+    if (product.input && product.input !== product.mainUrl) out.push(`- Введено: ${product.input}`);
+  }
   out.push(`- Прогін #${run.id}, ${day(run.startedAt ?? run.createdAt)}, статус: ${run.status}`, "");
 
-  for (const section of SECTIONS) {
+  for (const section of sectionsFor(product.kind)) {
     const list = items.filter((i) => i.section === section.key);
     if (list.length === 0) continue;
     out.push(`## ${section.title}`, "");
@@ -41,7 +47,7 @@ export function cardToMarkdown(product: Product, run: Run, srcs: Source[], items
       const field = item.field ? `**${item.field}:** ` : "";
       let line = `- ${field}${item.value}`;
       if (src?.ref) line += ` [S${src.ref}]`;
-      if (item.status === "reference" && item.seeSection) line += ` → ${sectionTitle(item.seeSection)}`;
+      if (item.status === "reference" && item.seeSection) line += ` → ${sectionTitle(item.seeSection, product.kind)}`;
       if (item.status === "not_established") {
         line += ` — Not established${item.reason ? `: ${item.reason}` : ""}`;
       }

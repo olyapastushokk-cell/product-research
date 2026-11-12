@@ -1,7 +1,7 @@
 // Generates docs/AGENT.md from the prompts and limits in code.
 // Run: npm run docs:agent
 import { writeFileSync } from "node:fs";
-import { LIMITS, MODELS, PRICES } from "../lib/research/config.ts";
+import { COST_LIMIT_USD, LIMITS, MODELS, PRICES } from "../lib/research/config.ts";
 import {
   CARD_SYSTEM,
   CLASSIFY_SYSTEM,
@@ -11,7 +11,18 @@ import {
   RESOLVE_CHOOSE_SYSTEM,
   RESOLVE_EXTRACT_SYSTEM,
   SECTION_SPECS,
+  TOPIC_CARD_SYSTEM,
+  TOPIC_PICK_SYSTEM,
+  TOPIC_PLAN_SYSTEM,
+  TOPIC_SECTION_SPECS,
 } from "../lib/research/prompts.ts";
+
+const topicGroups = [
+  ["topic_what", "topic_regulation"],
+  ["topic_who_when", "topic_providers"],
+  ["topic_stats", "topic_news"],
+  ["topic_problems", "research_mentions", "(niche_questions, only if the niche has questions)"],
+];
 
 const fence = (text: string) => "```text\n" + text.trim() + "\n```";
 
@@ -62,7 +73,7 @@ waits for the time in the error and is retried up to ${LIMITS.firecrawlRateLimit
 |---|---|
 | Model calls | ${LIMITS.maxModelCalls} |
 | Page reads (every scrape attempt) | ${LIMITS.maxPageReads} |
-| Cost | $${LIMITS.maxCostUsd} |
+| Cost (product / topic) | $${LIMITS.maxCostUsd} / $${COST_LIMIT_USD.topic} |
 | Pages reserved for search results | ${LIMITS.reservedForSearch} |
 | Extra URLs read | ${LIMITS.maxExtraUrls} |
 | Characters per source sent to Sonnet | ${LIMITS.cardCharsPerSource} |
@@ -148,6 +159,37 @@ ${Object.entries(SECTION_SPECS)
   .map(([k, v]) => `- **${k}** — ${v.replace(/^[a-z_]+: /, "")}`)
   .join("\n")}
 - **niche_questions** (only when the niche has questions) — ${NICHE_QUESTIONS_SPEC.replace(/^niche_questions: /, "")}
+
+## Topic mode
+
+For a solution or topic, not one company (e.g. "е-ТТН"). There is no official domain, so steps 2–3
+are replaced: the user's URLs are read first, Haiku plans up to ${LIMITS.topicMaxQueries} search queries in the topic's
+language (plus English for non-English topics) across six intents (official, regulation,
+providers, news, research, reviews), Firecrawl searches (${LIMITS.topicResultsPerQuery} results per query, geo-targeted to the
+topic's country), Haiku picks what to read, then classify and card writing run as for products
+with the topic prompts below. Limits: ${LIMITS.maxPageReads} pages, ${LIMITS.maxModelCalls} model calls, cost $${COST_LIMIT_USD.topic} per run.
+
+Topic card groups: ${topicGroups.map((g) => g.join(", ")).join(" | ")}.
+
+### T1. Topic plan: queries (Haiku)
+
+${fence(TOPIC_PLAN_SYSTEM)}
+
+### T2. Pick search results for a topic (Haiku)
+
+${fence(TOPIC_PICK_SYSTEM)}
+
+### T3. Write topic card items (Sonnet)
+
+System prompt (same for every group):
+
+${fence(TOPIC_CARD_SYSTEM)}
+
+Section specs:
+
+${Object.entries(TOPIC_SECTION_SPECS)
+  .map(([k, v]) => `- **${k}** — ${v.replace(/^[a-z_]+: /, "")}`)
+  .join("\n")}
 `;
 
 writeFileSync(new URL("../docs/AGENT.md", import.meta.url), doc);

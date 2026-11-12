@@ -36,6 +36,13 @@
       "when": 1794333537756,
       "tag": "0004_card_item_flags",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794503746984,
+      "tag": "0005_research_kind",
+      "breakpoints": true
     }
   ]
 }

@@ -60,3 +60,25 @@ export const SECTIONS = [
 ] as const;
 
 export type SectionKey = (typeof SECTIONS)[number]["key"];
+
+// Topic mode: a solution or topic, not one company (e.g. "е-ТТН").
+export const TOPIC_SECTIONS = [
+  { key: "topic_what", title: "1. Що це" },
+  { key: "topic_regulation", title: "2. Регулювання і законодавча база" },
+  { key: "topic_who_when", title: "3. Для кого і коли обов'язково" },
+  { key: "topic_providers", title: "4. Рішення та провайдери" },
+  { key: "topic_stats", title: "5. Статистика і поширення" },
+  { key: "topic_news", title: "6. Новини і хронологія" },
+  { key: "topic_problems", title: "7. Проблеми і скарги" },
+  { key: "research_mentions", title: "8. Згадки в дослідженнях" },
+  { key: "niche_questions", title: "9. Питання ніші" },
+  { key: "not_established", title: "10. Не встановлено" },
+] as const;
+
+export function sectionsFor(kind: string | null | undefined): readonly { key: string; title: string }[] {
+  return kind === "topic" ? TOPIC_SECTIONS : SECTIONS;
+}
+
+export function sectionTitleFor(kind: string | null | undefined, key: string | null): string {
+  return sectionsFor(kind).find((s) => s.key === key)?.title ?? key ?? "";
+}

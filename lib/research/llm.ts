@@ -4,7 +4,8 @@ import type { z } from "zod";
 import { estimateCost, estimateTokens, LIMITS } from "./config";
 import type { ModelCallLog } from "./types";
 
-export type BudgetLeft = { modelCalls: number; costUsd: number };
+// limitUsd: the run's cost limit (depends on product / topic mode), for messages.
+export type BudgetLeft = { modelCalls: number; costUsd: number; limitUsd?: number };
 
 export class BudgetStop extends Error {
   constructor(message: string) {
@@ -59,7 +60,7 @@ export async function callModel<T>(opts: {
   if (estimate > opts.budget.costUsd) {
     throw new BudgetStop(
       `Cost limit: next call "${opts.purpose}" is estimated at $${estimate.toFixed(3)}, ` +
-        `only $${opts.budget.costUsd.toFixed(3)} of $${LIMITS.maxCostUsd} left`,
+        `only $${opts.budget.costUsd.toFixed(3)} of $${opts.budget.limitUsd ?? LIMITS.maxCostUsd} left`,
     );
   }
 

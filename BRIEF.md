@@ -70,6 +70,14 @@ Card language: Ukrainian. Product names, plan names and industry terms: English.
 
 Sources table `[S1]..[Sn]` (see Format).
 
+## Topic mode
+For a solution or topic, not one company (e.g. "е-ТТН", electronic consignment note in Ukraine). There is no single official domain.
+
+- **Input:** topic name + optional URLs from the user (read first, flag `added_by_user`).
+- **Search broadly**, in the topic's language (non-English topics: also English queries): official / government and regulatory sources, providers and solutions, news, research and statistics, user reviews and complaints.
+- **Same rules as products:** source + quote for every item, source labels, no listicles or affiliate pages, `company_claim` for what providers say about themselves, "Not established" with a reason. Same limits (25 pages), cost limit $1 per run, partial results saved.
+- **Topic card sections:** Що це (definition, official sources first) · Регулювання і законодавча база · Для кого і коли обов'язково · Рішення та провайдери (each with its link; prices only from the provider's own pricing page) · Статистика і поширення · Новини і хронологія (with dates) · Проблеми і скарги · Згадки в дослідженнях · (Питання ніші) · Не встановлено.
+
 ## Run log
 Search queries · URLs read in full · URLs seen only in search results · skipped sources with reason · read errors · page count.
 

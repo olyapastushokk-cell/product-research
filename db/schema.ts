@@ -35,7 +35,9 @@ export const products = pgTable("products", {
     .notNull()
     .references(() => niches.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  // Exactly what the user typed (URL, domain, name or messy link).
+  // "product" (one company / product) or "topic" (a solution or topic, no single domain).
+  kind: text("kind").$type<"product" | "topic">().notNull().default("product"),
+  // Exactly what the user typed (URL, domain, name or messy link; the topic name for topics).
   input: text("input").notNull().default(""),
   // Official URL resolved from the input; null until resolved.
   mainUrl: text("main_url"),

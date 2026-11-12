@@ -13,4 +13,5 @@
 - Research agent: `workflows/research.ts` (Vercel Workflow; orchestration in the workflow, all I/O in `"use step"` functions). Prompts in `lib/research/prompts.ts`, limits and models in `lib/research/config.ts` (Sonnet writes card items only; Haiku for cheap steps). Hard limits per run: 40 model calls, 25 page reads, $0.50.
 - Workflow steps import `@/db/client` (no `server-only`); app code imports `@/db`.
 - UI: Tailwind v4 + shadcn/ui (`components/ui`), theme tokens in `app/globals.css`, Manrope font, accent #E96A2C. Shared pieces: `components/section-heading.tsx` (heading + orange bar), `chevron-link`, `status-badge`, `stat-card`, `info-panel`.
+- Two research modes: `products.kind` = "product" (resolve + own site + 3 searches) or "topic" (user URLs + broad search, topic sections `TOPIC_SECTIONS`, prompts `TOPIC_*`, cost limit `COST_LIMIT_USD.topic`).
 - Docs: `docs/AGENT.md` is generated from the prompts (`npm run docs:agent`; rerun after prompt changes); `docs/KNOWN_ISSUES.md` lists open issues.
